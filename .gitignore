@@ -1,0 +1,31 @@
+# General
+.DS_Store
+.vscode/
+.idea/
+/docs/images
+/docs/project_docs*
+
+# C++
+build/
+bin/
+lib/
+*.o
+*.obj
+*.out
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
