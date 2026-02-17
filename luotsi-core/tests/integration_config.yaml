@@ -1,0 +1,17 @@
+log_level: debug
+
+nodes:
+  - id: chat_node
+    runtime:
+      adapter: stdio
+      command: python3
+      args: ["../tests/mocks/stdio/chat_mock.py"]
+    routes:
+      - trigger: chat
+        target: mcp_node
+
+  - id: mcp_node
+    runtime:
+      adapter: stdio
+      command: python3
+      args: ["../tests/mocks/stdio/mcp_mock.py"]

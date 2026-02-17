@@ -1,12 +1,12 @@
 # LUOTSI
 
-**The Lifecycle Manager for Agentic Workflows.**
+**Integration and observability layer for Agentic Workflows.**
 
-"Luotsi" (Finnish for *Pilot*) acts as the core engine and governance kernel for your agent ecosystem. It provides a robust runtime for managing the lifecycle, communication, and compliance of AI agents, tools, and services.
+"Luotsi" (Finnish for *Pilot*) acts as the core engine and governance kernel for your agent ecosystem. It provides a robust runtime for managing the lifecycle, integration and communication of AI agents, tools, and services.
 
 ## What is Luotsi?
 
-Luotsi is a "software-defined switch fabric" for agentic systems. It connects disparate components—Agents, MCP Servers, specialized Nodes—through a central core that manages:
+Luotsi is a software-defined switch fabric for agentic systems. It connects disparate components—Agents, MCP Servers, specialized Nodes—through a central core that manages:
 
 *   **Routing**: Intelligently directs messages and tool calls between nodes based on declarative workflows.
 *   **Lifecycle Management**: Orchestrates the startup, shutdown, and health monitoring of all connected processes.

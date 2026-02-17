@@ -1,0 +1,20 @@
+log_level: debug
+
+nodes:
+  - id: internal_chat
+    runtime:
+      adapter: stdio
+      command: python3
+      args: ["../tests/mocks/stdio/chat_mock.py"]
+    routes:
+      - trigger: chat
+        target: external_rpc
+
+  - id: external_rpc
+    runtime:
+      adapter: jsonrpc_tcp
+      host: "127.0.0.1"
+      port: 8888
+    routes:
+      - trigger: chat.reply
+        target: internal_chat

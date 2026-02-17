@@ -1,0 +1,10 @@
+log_level: debug
+nodes:
+  - id: test_node
+    runtime:
+      adapter: stdio
+      command: python3
+      args: ["-c", "print('hello')"]
+    routes:
+      - trigger: test_trigger
+        target: other_node

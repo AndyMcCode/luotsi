@@ -1,0 +1,30 @@
+# Global Settings
+log_level: debug
+audit_log: "playground_audit.jsonl"
+
+# Nodes (The Grid)
+nodes:
+  - id: "whatsapp_node"
+    runtime:
+      adapter: "stdio"
+      command: "docker"
+      args: ["run", "-i", "--rm", "luotsi-playground-whatsapp"]
+    routes:
+      - namespace: "messaging"
+        target: "odoo_node"
+
+  - id: "odoo_node"
+    runtime:
+      adapter: "stdio"
+      command: "docker"
+      args: ["run", "-i", "--rm", "luotsi-playground-odoo"]
+    # Odoo replies to the sender, so explicit routing might not be needed for request/response,
+    # but initially we can route all "response" namespaces or similar if we implement that logic.
+    # For now, let's assume direct mapping.
+
+  - id: "mcp_odoo"
+    runtime:
+      adapter: "stdio"
+      command: "docker"
+      args: ["run", "-i", "--rm", "mcp/odoo:latest"]
+    routes: []

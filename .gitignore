@@ -4,6 +4,8 @@
 .idea/
 /docs/images
 /docs/project_docs*
+/CHEATSHEET.md
+/PHASE_0.5_REPORT.md
 
 # C++
 build/
@@ -29,3 +31,6 @@ env/
 *.egg-info/
 dist/
 build/
+
+# Odoo config with credentials
+playground/mcp-odoo/odoo_config.json
