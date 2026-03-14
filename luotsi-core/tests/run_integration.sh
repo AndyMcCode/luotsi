@@ -6,14 +6,14 @@ set -e
 # or we assume we are running from build/
 # Let's support running from build/
 
-BIN="./luotsi"
-CONFIG="../tests/integration_config.yaml"
+BIN=${1:-"./luotsi"}
+CONFIG=${2:-"../tests/integration_config.yaml"}
 
 echo "Running Integration Test..."
 timeout 5s $BIN --config $CONFIG > integration.log 2>&1 || true
 
 # Check logs for success pattern
-if grep -q "Routing chat_node -> mcp_node" integration.log; then
+if grep -q "Routing Request chat_node -> mcp_node" integration.log; then
     echo "PASS: Message routed from Chat -> MCP"
 else
     echo "FAIL: Route not found in logs"

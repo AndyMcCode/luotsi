@@ -41,4 +41,4 @@ When the Core routes a message to your agent, the Adapter writes it to the child
 1.  **Always use `-i`**: If you forget `-i` in `docker run`, the container's stdin closes immediately, and the adapter cannot send messages to it.
 2.  **Use `--rm`**: Let the Docker daemon clean up stopped containers to prevent resource leaks.
 3.  **Flush Stdout**: Ensure your application (Python, Node, etc.) flushes `stdout` after every message, or disable buffering (e.g., `PYTHONUNBUFFERED=1`).
-4.  **Logging**: Do NOT print logs to `stdout`! Use `stderr` for logs. `stdout` is exclusively for the data plane (JSON messages).
+4.  **Logging**: Do NOT print logs to `stdout`! Use `stderr` for logs. The Stdio Adapter natively captures the child process's `stderr` stream asynchronously and automatically forwards it into the central `spdlog` engine, ensuring comprehensive, interwoven traceability of your agent's execution without polluting the JSON data plane on `stdout`.

@@ -2,7 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <iostream>
 
-namespace luotsi {
+namespace luotsi::adapters {
 
 JsonRpcTcpAdapter::JsonRpcTcpAdapter(asio::io_context& io_context, std::string node_id)
     : io_context_(io_context), node_id_(node_id), socket_(io_context) {}
@@ -11,7 +11,7 @@ JsonRpcTcpAdapter::~JsonRpcTcpAdapter() {
     stop();
 }
 
-void JsonRpcTcpAdapter::init(const RuntimeConfig& config) {
+void JsonRpcTcpAdapter::init(const luotsi::internal::RuntimeConfig& config) {
     config_ = config;
 }
 

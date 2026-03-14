@@ -2,7 +2,7 @@
 #include <spdlog/spdlog.h>
 #include "runtime.hpp"
 
-using namespace luotsi;
+using namespace luotsi::internal;
 
 int main(int argc, char** argv) {
     std::string config_path = "luotsi.config.yaml";

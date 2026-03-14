@@ -5,14 +5,14 @@
 #include <thread>
 #include <deque>
 
-namespace luotsi {
+namespace luotsi::adapters {
 
 class JsonRpcTcpAdapter : public IAdapter {
 public:
     JsonRpcTcpAdapter(asio::io_context& io_context, std::string node_id);
     ~JsonRpcTcpAdapter();
 
-    void init(const RuntimeConfig& config) override;
+    void init(const luotsi::internal::RuntimeConfig& config) override;
     void start() override;
     void stop() override;
     void send(const MessageFrame& frame) override;
@@ -25,7 +25,7 @@ private:
 
     asio::io_context& io_context_;
     std::string node_id_;
-    RuntimeConfig config_;
+    luotsi::internal::RuntimeConfig config_;
     OnReceiveCallback on_receive_;
 
     asio::ip::tcp::socket socket_;

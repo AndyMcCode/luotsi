@@ -1,0 +1,8 @@
+# Luotsi Inter-Node Authentication Policy
+roles:
+  - name: "admin"
+    secret_key: "super_secret_admin"
+    allowed_servers: ["*"]
+  - name: "guest"
+    secret_key: "guest_key_123"
+    allowed_servers: ["dummy_mcp"]

@@ -3,7 +3,7 @@
 #include <sys/wait.h>
 #include <iostream>
 
-namespace luotsi {
+namespace luotsi::adapters {
 
 StdioAdapter::StdioAdapter(asio::io_context& io_context, std::string node_id)
     : io_context_(io_context), node_id_(std::move(node_id)) {}
@@ -12,7 +12,7 @@ StdioAdapter::~StdioAdapter() {
     stop();
 }
 
-void StdioAdapter::init(const RuntimeConfig& config) {
+void StdioAdapter::init(const luotsi::internal::RuntimeConfig& config) {
     config_ = config;
 }
 
@@ -21,6 +21,9 @@ void StdioAdapter::start() {
     // Start async read from stdout_stream
     stdout_stream_ = std::make_unique<asio::posix::stream_descriptor>(io_context_, pipe_stdout_[0]);
     read_stdout();
+    // Start async read from stderr_stream
+    stderr_stream_ = std::make_unique<asio::posix::stream_descriptor>(io_context_, pipe_stderr_[0]);
+    read_stderr();
 }
 
 void StdioAdapter::stop() {
@@ -35,6 +38,10 @@ void StdioAdapter::stop() {
         stdout_stream_->close();
         stdout_stream_.reset();
     }
+    if (stderr_stream_) {
+        stderr_stream_->close();
+        stderr_stream_.reset();
+    }
     // Closes pipes if not already closed by stream_descriptor
     // (stream_descriptor takes ownership if we constructed it with the fd, 
     // but here we might need to be careful not to double close or leak if constructor throws)
@@ -44,7 +51,7 @@ void StdioAdapter::stop() {
 }
 
 void StdioAdapter::spawn_process() {
-    if (pipe(pipe_stdin_) == -1 || pipe(pipe_stdout_) == -1) {
+    if (pipe(pipe_stdin_) == -1 || pipe(pipe_stdout_) == -1 || pipe(pipe_stderr_) == -1) {
         throw std::runtime_error("Failed to create pipes");
     }
 
@@ -58,10 +65,12 @@ void StdioAdapter::spawn_process() {
         // Close unused ends
         close(pipe_stdin_[1]); // Child reads from stdin[0]
         close(pipe_stdout_[0]); // Child writes to stdout[1]
+        close(pipe_stderr_[0]); // Child writes to stderr[1]
 
-        // Redirect Stdin/Stdout
+        // Redirect Stdin/Stdout/Stderr
         if (dup2(pipe_stdin_[0], STDIN_FILENO) == -1 || 
-            dup2(pipe_stdout_[1], STDOUT_FILENO) == -1) {
+            dup2(pipe_stdout_[1], STDOUT_FILENO) == -1 ||
+            dup2(pipe_stderr_[1], STDERR_FILENO) == -1) {
             perror("dup2");
             exit(1);
         }
@@ -69,6 +78,7 @@ void StdioAdapter::spawn_process() {
         // Close originals after dup
         close(pipe_stdin_[0]);
         close(pipe_stdout_[1]);
+        close(pipe_stderr_[1]);
         
         // Prepare args
         std::vector<const char*> args;
@@ -87,6 +97,7 @@ void StdioAdapter::spawn_process() {
         // Close unused ends
         close(pipe_stdin_[0]); // Parent writes to stdin[1]
         close(pipe_stdout_[1]); // Parent reads from stdout[0]
+        close(pipe_stderr_[1]); // Parent reads from stderr[0]
         
         spdlog::info("Spawned node {} with pid {}", node_id_, pid_);
     }
@@ -141,6 +152,26 @@ void StdioAdapter::read_stdout() {
                 if (error != asio::error::operation_aborted) {
                     spdlog::error("Node {} read error: {}", node_id_, error.message());
                 }
+            }
+        });
+}
+
+void StdioAdapter::read_stderr() {
+    // Read stderr until newline
+    asio::async_read_until(*stderr_stream_, stderr_buffer_, '\n',
+        [this](const std::error_code& error, std::size_t bytes_transferred) {
+            if (!error) {
+                std::istream is(&stderr_buffer_);
+                std::string line;
+                std::getline(is, line);
+                
+                if (!line.empty()) {
+                    spdlog::info("[{}] {}", node_id_, line);
+                }
+                
+                read_stderr(); // Continue reading
+            } else if (error != asio::error::operation_aborted) {
+                // Usually EOF means the process closed its stderr, safe to ignore mostly
             }
         });
 }

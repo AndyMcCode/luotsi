@@ -5,7 +5,9 @@
 #include <mutex>
 #include "../adapters/adapter.hpp"
 
-namespace luotsi {
+namespace luotsi::internal {
+
+using MessageFrame = luotsi::MessageFrame;
 
 class Observability {
 public:
@@ -20,4 +22,4 @@ private:
    std::mutex mutex_;
 };
 
-} // namespace luotsi
+} // namespace luotsi::internal

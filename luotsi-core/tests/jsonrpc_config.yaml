@@ -5,7 +5,7 @@ nodes:
     runtime:
       adapter: stdio
       command: python3
-      args: ["../tests/mocks/stdio/chat_mock.py"]
+      args: ["tests/mocks/stdio/chat_mock.py"]
     routes:
       - trigger: chat
         target: external_rpc

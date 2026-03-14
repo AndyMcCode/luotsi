@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 
-namespace luotsi {
+namespace luotsi::internal {
 
 std::expected<Config, std::string> Config::load_from_file(const std::string& path) {
     Config config;
@@ -16,6 +16,10 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
 
         if (root["audit_log"]) {
             config.audit_log = root["audit_log"].as<std::string>();
+        }
+        
+        if (root["policies_file"]) {
+            config.policies_file = root["policies_file"].as<std::string>();
         }
 
         if (root["nodes"]) {
@@ -41,6 +45,22 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
                     }
                 }
 
+                if (node_yaml["is_mcp_server"]) {
+                    node_config.is_mcp_server = node_yaml["is_mcp_server"].as<bool>();
+                }
+                
+                if (node_yaml["disabled_capabilities"]) {
+                    for (const auto& cap : node_yaml["disabled_capabilities"]) {
+                        node_config.disabled_capabilities.push_back(cap.as<std::string>());
+                    }
+                }
+
+                if (node_yaml["depends"]) {
+                    for (const auto& dep : node_yaml["depends"]) {
+                        node_config.depends.push_back(dep.as<std::string>());
+                    }
+                }
+
                 if (node_yaml["routes"]) {
                     for (const auto& route_yaml : node_yaml["routes"]) {
                         RouteConfig route_config;
@@ -50,10 +70,19 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
                              route_config.trigger = route_yaml["trigger"].as<std::string>();
                         }
                         
-                        route_config.target = route_yaml["target"].as<std::string>();
-                        
+                        if (route_yaml["target"]) {
+                            route_config.target = route_yaml["target"].as<std::string>();
+                        }
+                        if (route_yaml["targets"]) {
+                            for (const auto& target : route_yaml["targets"]) {
+                                route_config.targets.push_back(target.as<std::string>());
+                            }
+                        }
                         if (route_yaml["action"]) {
                             route_config.action = route_yaml["action"].as<std::string>();
+                        }
+                        if (route_yaml["new_method"]) {
+                            route_config.new_method = route_yaml["new_method"].as<std::string>();
                         }
                         node_config.routes.push_back(route_config);
                     }
@@ -72,4 +101,29 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
     return config;
 }
 
-} // namespace luotsi
+std::expected<std::vector<PolicyRole>, std::string> Config::load_policies(const std::string& path) {
+    try {
+        YAML::Node root = YAML::LoadFile(path);
+        std::vector<PolicyRole> roles;
+
+        if (root["roles"]) {
+            for (const auto& role_yaml : root["roles"]) {
+                PolicyRole role;
+                if (role_yaml["name"]) role.name = role_yaml["name"].as<std::string>();
+                if (role_yaml["secret_key"]) role.secret_key = role_yaml["secret_key"].as<std::string>();
+                if (role_yaml["allowed_servers"]) {
+                    for (const auto& srv : role_yaml["allowed_servers"]) {
+                        role.allowed_servers.push_back(srv.as<std::string>());
+                    }
+                }
+                roles.push_back(role);
+            }
+        }
+        return roles;
+
+    } catch (const YAML::Exception& e) {
+        return std::unexpected(std::string("YAML Exception loading policies: ") + e.what());
+    }
+}
+
+} // namespace luotsi::internal

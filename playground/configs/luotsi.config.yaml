@@ -7,17 +7,17 @@ nodes:
   - id: "whatsapp_node"
     runtime:
       adapter: "stdio"
-      command: "docker"
-      args: ["run", "-i", "--rm", "luotsi-playground-whatsapp"]
+      command: "python3"
+      args: ["playground/whatsapp/whatsapp_mock.py"]
     routes:
-      - namespace: "messaging"
+      - trigger: "*"
         target: "odoo_node"
 
   - id: "odoo_node"
     runtime:
       adapter: "stdio"
-      command: "docker"
-      args: ["run", "-i", "--rm", "luotsi-playground-odoo"]
+      command: "python3"
+      args: ["playground/odoo/odoo_mock.py"]
     # Odoo replies to the sender, so explicit routing might not be needed for request/response,
     # but initially we can route all "response" namespaces or similar if we implement that logic.
     # For now, let's assume direct mapping.
@@ -26,5 +26,5 @@ nodes:
     runtime:
       adapter: "stdio"
       command: "docker"
-      args: ["run", "-i", "--rm", "mcp/odoo:latest"]
+      args: ["run", "-i", "--rm", "--env-file", "playground/mcp-odoo/.env", "luotsi-playground-odoo"]
     routes: []

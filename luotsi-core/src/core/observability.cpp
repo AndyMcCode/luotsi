@@ -6,7 +6,7 @@
 #include <sstream>
 #include <random>
 
-namespace luotsi {
+namespace luotsi::internal {
 
 std::string generate_uuid_v4() {
     static std::random_device rd;
@@ -77,4 +77,4 @@ void Observability::log_message(const MessageFrame& frame) {
     log_stream_ << cloudevent.dump() << std::endl;
 }
 
-} // namespace luotsi
+} // namespace luotsi::internal

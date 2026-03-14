@@ -4,9 +4,9 @@ set -e
 # Run Luotsi with the JSON-RPC config
 # We assume we are running from build/
 
-BIN="./luotsi"
-CONFIG="../tests/jsonrpc_config.yaml"
-MOCK="../tests/mocks/json_rpc2/tcp_mock.py"
+BIN=${1:-"./luotsi"}
+CONFIG=${2:-"../tests/jsonrpc_config.yaml"}
+MOCK="tests/mocks/json_rpc2/tcp_mock.py"
 
 echo "Starting TCP Mock Server..."
 python3 $MOCK > tcp_mock.log 2>&1 &
@@ -32,7 +32,7 @@ else
 fi
 
 # 2. Did we send data?
-if grep -q "Routing internal_chat -> external_rpc" jsonrpc_test.log; then
+if grep -q "Routing Request internal_chat -> external_rpc" jsonrpc_test.log; then
     echo "PASS: Message routed to JSON-RPC adapter"
 else
     echo "FAIL: Routing to adapter failed"

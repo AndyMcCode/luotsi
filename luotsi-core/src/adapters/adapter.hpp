@@ -7,20 +7,22 @@
 #include "../core/config.hpp"
 
 namespace luotsi {
-
-// MessageFrame - The internal envelope
 struct MessageFrame {
     std::string source_id;
     std::string target_id;
     nlohmann::json payload;
 };
+}
+
+namespace luotsi::adapters {
+using MessageFrame = luotsi::MessageFrame;
 
 class IAdapter {
 public:
     virtual ~IAdapter() = default;
 
     // Initialize with specific config (e.g. command args)
-    virtual void init(const RuntimeConfig& config) = 0;
+    virtual void init(const luotsi::internal::RuntimeConfig& config) = 0;
 
     // Start the adapter (e.g. spawn process, bind port)
     virtual void start() = 0;

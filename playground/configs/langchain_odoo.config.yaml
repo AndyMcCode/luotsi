@@ -1,0 +1,64 @@
+# Luotsi Configuration for LangChain Agent + Odoo MCP Integration
+log_level: info
+audit_log: "integration_audit.jsonl"
+policies_file: "playground/configs/policies.yaml"
+
+nodes:
+  - id: "whatsapp_mock"
+    runtime:
+      adapter: "stdio"
+      command: "python3"
+      args: ["playground/whatsapp/whatsapp_mock.py"]
+    routes:
+      - trigger: "whatsapp.message_received"
+        target: "langchain_agent"
+        action: "translate"
+        new_method: "messaging.incoming"
+
+  - id: "langchain_agent"
+    runtime:
+      adapter: "stdio"
+      command: "docker"
+      args: ["run", "-i", "--rm", "--env-file", "playground/langchain-agent/.env", "luotsi-agent"]
+    depends: ["odoo_mcp", "dummy_mcp"]
+    routes:
+      - namespace: "messaging"  # Replies back to mock
+        target: "whatsapp_mock"
+      - trigger: "initialize"
+        action: "mcp_registry_query"
+        targets: ["odoo_mcp", "dummy_mcp"]
+      - trigger: "tools/list"
+        action: "mcp_registry_query"
+        targets: ["odoo_mcp", "dummy_mcp"]
+      - trigger: "resources/list"
+        action: "mcp_registry_query"
+        targets: ["odoo_mcp", "dummy_mcp"]
+      - trigger: "resources/templates/list"
+        action: "mcp_registry_query"
+        targets: ["odoo_mcp", "dummy_mcp"]
+      - trigger: "resources/read"
+        target: "odoo_mcp"
+      - trigger: "tools/call"
+        action: "mcp_call_router"
+      - trigger: "notifications/initialized"
+        action: "fan_out_mcp"
+        targets: ["odoo_mcp", "dummy_mcp"]
+
+  - id: "odoo_mcp"
+    is_mcp_server: true
+    runtime:
+      adapter: "stdio"
+      command: "docker"
+      # Using the playground/mcp-odoo/Dockerfile built image
+      # The user's env file for odoo is likely needed
+      args: ["run", "-i", "--rm", "--env-file", "playground/mcp-odoo/.env", "luotsi-playground-odoo"]
+    # Responses routed automatically by request ID back to agent
+    routes: []
+
+  - id: "dummy_mcp"
+    is_mcp_server: true
+    runtime:
+      adapter: "stdio"
+      command: "python3"
+      args: ["playground/dummy-mcp/dummy_mcp.py"]
+    routes: []

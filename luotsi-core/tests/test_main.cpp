@@ -5,9 +5,9 @@
 #include <fstream>
 
 TEST(ConfigTest, LoadFromFile) {
-    auto result = luotsi::Config::load_from_file("test_config.yaml");
+    auto result = luotsi::internal::Config::load_from_file(TEST_CONFIG_PATH);
     ASSERT_TRUE(result.has_value()) << "Failed to load config: " << result.error();
-    luotsi::Config config = result.value();
+    luotsi::internal::Config config = result.value();
     EXPECT_EQ(config.log_level, "debug");
     ASSERT_EQ(config.nodes.size(), 1);
     EXPECT_EQ(config.nodes[0].id, "test_node");

@@ -35,12 +35,19 @@ To run the Odoo <-> WhatsApp demo:
     cd ../odoo && docker build -t luotsi-playground-odoo .
     ```
 
-2.  **Run Luotsi**:
+3.  **Run Luotsi Core**:
     ```bash
     # From repo root
     ./luotsi-core/build/luotsi --config playground/configs/luotsi.config.yaml
     ```
     *(Note: You might need to adjust paths depending on where you run from. The config loader expects paths to be correct relative to CWD if they are files, but currently `node.yaml` structure isn't fully implemented in file-splitting, everything is in one mono-config for the skeleton.)*
+
+## Advanced Playgrounds
+
+The core repo contains multiple playground configurations to test advanced features:
+
+- **Langchain & Odoo**: A demonstration of real-world tool execution and orchestration via Luotsi's `langchain-agent` client interacting with the Odoo MCP. Use `playground/configs/langchain_odoo.config.yaml`.
+- **Multi-Node Orchestration**: Features a `dummy-mcp` server integrated alongside other tools to comprehensively validate `fan_out_mcp` multiplexing and `mcp_call_router` orchestration workflows without deploying heavy external dependencies.
 
 ## Debugging
 -   **Logging**: Powered by `spdlog`. Check stdout.

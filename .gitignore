@@ -34,3 +34,15 @@ build/
 
 # Odoo config with credentials
 playground/mcp-odoo/odoo_config.json
+playground/mcp-odoo/.env
+
+playground/mcp-odoo
+playground/test_output.log
+
+
+
+# Audit logs
+integration_audit.jsonl
+
+#vscode
+.vscode/
