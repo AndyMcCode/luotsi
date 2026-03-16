@@ -1,5 +1,7 @@
 # LUOTSI
 
+Luotsi is under development
+
 **Integration and observability layer for Agentic Workflows.**
 
 "Luotsi" (Finnish for *Pilot*) acts as the core engine and governance kernel for your agent ecosystem. It provides a robust runtime for managing the lifecycle, integration and communication of AI agents, tools, and services.
