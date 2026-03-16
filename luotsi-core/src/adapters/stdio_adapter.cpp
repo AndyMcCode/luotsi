@@ -110,7 +110,11 @@ void StdioAdapter::send(const MessageFrame& frame) {
     // or better: wrap it since IAdapter interface might be called from IO thread.
     
     // Format: Line delimited JSON
-    std::string data = frame.payload.dump() + "\n";
+    nlohmann::json out_json = frame.payload;
+    if (!frame.delegated_role.empty()) {
+        out_json["__luotsi_role__"] = frame.delegated_role;
+    }
+    std::string data = out_json.dump() + "\n";
     ssize_t written = ::write(pipe_stdin_[1], data.c_str(), data.size());
     if (written < 0) {
         spdlog::error("Failed to write to node {}", node_id_);
@@ -138,6 +142,10 @@ void StdioAdapter::read_stdout() {
                         // Let's assume agent sends {"method": ...} (JsonRPC)
                         // This adapter wraps it into a MessageFrame for the bus.
                         frame.payload = json;
+                        if (json.contains("__luotsi_role__") && json["__luotsi_role__"].is_string()) {
+                            frame.delegated_role = json["__luotsi_role__"].get<std::string>();
+                            frame.payload.erase("__luotsi_role__");
+                        }
                         
                         if (on_receive_) {
                             on_receive_(frame);

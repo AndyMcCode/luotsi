@@ -26,7 +26,13 @@ private:
     void route_message(luotsi::MessageFrame& frame, const std::string& source_id);
     void reload_config();
     void reconcile_adapters(const Config& new_config);
+    void sanitize_payload(nlohmann::json& payload, size_t limit);
     void await_signal();
+
+    // Policy Helpers
+    std::string get_active_role_name(const MessageFrame& frame, const std::string& source_id);
+    bool is_tool_allowed(const std::string& role_name, const std::string& tool_name);
+    bool is_resource_allowed(const std::string& role_name, const std::string& resource_uri);
 
     // Dependency orchestration
     bool is_dependency_satisfied(const NodeConfig& node, const Config& current_config);

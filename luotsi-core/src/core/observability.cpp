@@ -70,6 +70,7 @@ void Observability::log_message(const MessageFrame& frame) {
     cloudevent["data"] = {
         {"source_id", frame.source_id},
         {"target_id", frame.target_id},
+        {"delegated_role", frame.delegated_role},
         {"payload", frame.payload}
     };
 

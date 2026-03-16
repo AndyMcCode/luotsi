@@ -38,11 +38,18 @@ struct NodeConfig {
 struct PolicyRole {
     std::string name;
     std::string secret_key;
+    bool is_trusted = false;
     std::vector<std::string> allowed_servers;
+    std::optional<size_t> max_token_size;
+    std::vector<std::string> allowed_tools;
+    std::vector<std::string> blocked_tools;
+    std::vector<std::string> allowed_resources;
+    std::vector<std::string> blocked_resources;
 };
 
 struct Config {
     std::string log_level = "info";
+    size_t max_token_size = 100000;
     std::optional<std::string> audit_log;
     std::optional<std::string> policies_file;
     std::vector<NodeConfig> nodes;
@@ -50,5 +57,7 @@ struct Config {
     static std::expected<Config, std::string> load_from_file(const std::string& path);
     static std::expected<std::vector<PolicyRole>, std::string> load_policies(const std::string& path);
 };
+
+bool wildcard_match(const std::string& pattern, const std::string& text);
 
 } // namespace luotsi::internal

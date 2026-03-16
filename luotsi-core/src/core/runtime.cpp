@@ -276,6 +276,68 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
 
     spdlog::info("Bus received from {}: {}", source_id, frame.payload.dump());
 
+    // 0. Payload Guard (Hierarchical)
+    size_t effective_limit = config_.max_token_size;
+    std::string active_role_name = get_active_role_name(frame, source_id);
+
+    if (!active_role_name.empty()) {
+        // Apply limits for the active role (assigned or delegated)
+        for (const auto& role : roles_) {
+            if (role.name == active_role_name && role.max_token_size.has_value()) {
+                effective_limit = role.max_token_size.value();
+                break;
+            }
+        }
+    }
+    sanitize_payload(frame.payload, effective_limit);
+
+    // 0.1 Tool Execution Check
+    std::string method;
+    if (frame.payload.contains("method")) {
+        method = frame.payload["method"].get<std::string>();
+        
+        if (method == "tools/call") {
+             std::string full_name = frame.payload["params"]["name"];
+             // Translate Luotsi internal __ to policy : for checking
+             std::string policy_name = full_name;
+             size_t pos = policy_name.find("__");
+             if (pos != std::string::npos) {
+                 policy_name.replace(pos, 2, ":");
+             }
+
+             if (!is_tool_allowed(active_role_name, policy_name)) {
+                 spdlog::warn("Access Denied: Role '{}' attempted to call unauthorized tool '{}' (policy check: '{}')", active_role_name, full_name, policy_name);
+                 
+                 MessageFrame error_reply;
+                 error_reply.source_id = "luotsi-hub";
+                 error_reply.target_id = source_id;
+                 error_reply.payload = {
+                     {"jsonrpc", "2.0"},
+                     {"id", frame.payload["id"]},
+                     {"error", {{"code", -32001}, {"message", "Access Denied: Unauthorized tool call"}}}
+                 };
+                 ports_[source_id]->send(error_reply);
+                 return;
+             }
+        } else if (method == "resources/read") {
+             std::string uri = frame.payload["params"]["uri"];
+             if (!is_resource_allowed(active_role_name, uri)) {
+                 spdlog::warn("Access Denied: Role '{}' attempted to read unauthorized resource '{}'", active_role_name, uri);
+                 
+                 MessageFrame error_reply;
+                 error_reply.source_id = "luotsi-hub";
+                 error_reply.target_id = source_id;
+                 error_reply.payload = {
+                     {"jsonrpc", "2.0"},
+                     {"id", frame.payload["id"]},
+                     {"error", {{"code", -32001}, {"message", "Access Denied: Unauthorized resource access"}}}
+                 };
+                 ports_[source_id]->send(error_reply);
+                 return;
+             }
+        }
+    }
+
     // 1. Response Routing
     if (frame.payload.contains("id") && !frame.payload.contains("method")) {
         std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
@@ -480,9 +542,8 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
     }
 
     // 2. Request Routing
-    std::string method;
     if (frame.payload.contains("method")) {
-        method = frame.payload["method"].get<std::string>();
+        // method already assigned at the top
         
         // Handle Authentication
         if (method == "luotsi/authenticate") {
@@ -600,61 +661,78 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 final_response["id"] = (orig_it != original_ids_.end()) ? orig_it->second : frame.payload["id"];
 
                 // ------------------ POLICY ENFORCEMENT ------------------
-                std::vector<std::string> allowed;
-                auto agent_port = std::dynamic_pointer_cast<ports::AgentPort>(ports_[source_id]);
-                if (agent_port && agent_port->isAuthenticated()) {
-                    std::string assigned_role = agent_port->getRole();
-                    for (const auto& role : roles_) {
-                        if (role.name == assigned_role) {
-                            allowed = role.allowed_servers;
-                            break;
-                        }
+                std::string active_role_name = get_active_role_name(frame, source_id);
+                std::vector<std::string> allowed_servers;
+
+                for (const auto& role : roles_) {
+                    if (role.name == active_role_name) {
+                        allowed_servers = role.allowed_servers;
+                        break;
                     }
-                } else {
-                    spdlog::warn("Agent {} NOT authenticated. Registry query denied by policy.", source_id);
                 }
 
-                auto is_allowed = [&](const std::string& target) {
-                    for (const auto& a : allowed) {
+                auto is_server_allowed = [&](const std::string& target) {
+                    for (const auto& a : allowed_servers) {
                         if (a == "*" || a == target) return true;
                     }
                     return false;
                 };
                 
-                auto get_active_mcp_ports = [&]() {
+                auto get_permitted_mcp_ports = [&]() {
                     std::vector<std::shared_ptr<ports::McpPort>> results;
                     for (const auto& [id, port] : ports_) {
                         if (auto mcp = std::dynamic_pointer_cast<ports::McpPort>(port)) {
-                            if (is_allowed(id)) results.push_back(mcp);
+                            if (is_server_allowed(id)) results.push_back(mcp);
                         }
                     }
                     return results;
                 };
                 
-                auto active_mcp_ports = get_active_mcp_ports();
+                auto permitted_mcp_ports = get_permitted_mcp_ports();
                 // --------------------------------------------------------
 
                 if (method == "tools/list") {
-                    nlohmann::json merged = nlohmann::json::array();
-                    for (const auto& p : active_mcp_ports) {
-                        for (const auto& item : p->getCapabilities("tools")) { merged.push_back(item); }
+                    nlohmann::json filtered = nlohmann::json::array();
+                    for (const auto& p : permitted_mcp_ports) {
+                        for (auto item : p->getCapabilities("tools")) { 
+                            std::string tool_name = item["name"];
+                            // Tool name in cache is already namespaced: "provider__tool"
+                            // Translate to policy format: "provider:tool"
+                            std::string policy_name = tool_name;
+                            size_t pos = policy_name.find("__");
+                            if (pos != std::string::npos) {
+                                policy_name.replace(pos, 2, ":");
+                            }
+
+                            if (is_tool_allowed(active_role_name, policy_name)) {
+                                filtered.push_back(item); 
+                            }
+                        }
                     }
-                    final_response["result"] = {{"tools", merged}};
+                    final_response["result"] = {{"tools", filtered}};
                 } else if (method == "resources/list") {
-                    nlohmann::json merged = nlohmann::json::array();
-                    for (const auto& p : active_mcp_ports) {
-                        for (const auto& item : p->getCapabilities("resources")) { merged.push_back(item); }
+                    nlohmann::json filtered = nlohmann::json::array();
+                    for (const auto& p : permitted_mcp_ports) {
+                        for (const auto& item : p->getCapabilities("resources")) { 
+                            if (is_resource_allowed(active_role_name, item["uri"])) {
+                                filtered.push_back(item); 
+                            }
+                        }
                     }
-                    final_response["result"] = {{"resources", merged}};
+                    final_response["result"] = {{"resources", filtered}};
                 } else if (method == "resources/templates/list") {
-                    nlohmann::json merged = nlohmann::json::array();
-                    for (const auto& p : active_mcp_ports) {
-                        for (const auto& item : p->getCapabilities("templates")) { merged.push_back(item); }
+                    nlohmann::json filtered = nlohmann::json::array();
+                    for (const auto& p : permitted_mcp_ports) {
+                        for (const auto& item : p->getCapabilities("templates")) { 
+                            if (is_resource_allowed(active_role_name, item["uriTemplate"])) {
+                                filtered.push_back(item); 
+                            }
+                        }
                     }
-                    final_response["result"] = {{"resourceTemplates", merged}};
+                    final_response["result"] = {{"resourceTemplates", filtered}};
                 } else if (method == "prompts/list") {
                     nlohmann::json merged = nlohmann::json::array();
-                    for (const auto& p : active_mcp_ports) {
+                    for (const auto& p : permitted_mcp_ports) {
                         for (const auto& item : p->getCapabilities("prompts")) { merged.push_back(item); }
                     }
                     final_response["result"] = {{"prompts", merged}};
@@ -709,4 +787,99 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
     spdlog::warn("No route found for message from {} (method: {})", source_id, method);
 }
 
-} // namespace luotsi
+void Runtime::sanitize_payload(nlohmann::json& payload, size_t limit) {
+    if (payload.is_string()) {
+        std::string s = payload.get<std::string>();
+        if (s.size() > limit) {
+            spdlog::warn("Field exceeds max_token_size ({} > {}). Stripping.", s.size(), limit);
+            payload = "[BLOCKED: Field exceeds max_token_size]";
+        }
+    } else if (payload.is_object()) {
+        for (auto it = payload.begin(); it != payload.end(); ++it) {
+            sanitize_payload(it.value(), limit);
+        }
+    } else if (payload.is_array()) {
+        for (auto& item : payload) {
+            sanitize_payload(item, limit);
+        }
+    }
+}
+
+std::string Runtime::get_active_role_name(const MessageFrame& frame, const std::string& source_id) {
+    auto agent_port = std::dynamic_pointer_cast<ports::AgentPort>(ports_[source_id]);
+    if (!agent_port || !agent_port->isAuthenticated()) return "";
+
+    std::string base_role = agent_port->getRole();
+    bool is_source_trusted = false;
+    for (const auto& role : roles_) {
+        if (role.name == base_role) {
+            is_source_trusted = role.is_trusted;
+            break;
+        }
+    }
+
+    if (!frame.delegated_role.empty() && is_source_trusted) {
+        return frame.delegated_role;
+    }
+    return base_role;
+}
+
+bool Runtime::is_tool_allowed(const std::string& role_name, const std::string& tool_name) {
+    if (role_name.empty()) return false;
+    
+    const PolicyRole* active_role = nullptr;
+    for (const auto& role : roles_) {
+        if (role.name == role_name) {
+            active_role = &role;
+            break;
+        }
+    }
+
+    if (!active_role) return false;
+
+    // 1. Check Blocklist (Deny-Wins)
+    for (const auto& pattern : active_role->blocked_tools) {
+        if (wildcard_match(pattern, tool_name)) return false;
+    }
+
+    // 2. Check Allowlist
+    if (active_role->allowed_tools.empty()) return true; // Default allow if no tool restrictions defined for role?
+    // Actually, if we want to be secure by default, we should check if any allowed_tools are defined.
+    // But for backward compatibility with "allowed_servers" only, let's say if allowed_tools is empty, it's allowed.
+    // Wait, let's look at the requirement: "right now we dont have any restriction for agents using mcp server full potential"
+    // So if allowed_tools is empty, it probably means "full potential" (if server is allowed).
+    
+    for (const auto& pattern : active_role->allowed_tools) {
+        if (wildcard_match(pattern, tool_name)) return true;
+    }
+
+    return false;
+}
+
+bool Runtime::is_resource_allowed(const std::string& role_name, const std::string& resource_uri) {
+    if (role_name.empty()) return false;
+    
+    const PolicyRole* active_role = nullptr;
+    for (const auto& role : roles_) {
+        if (role.name == role_name) {
+            active_role = &role;
+            break;
+        }
+    }
+
+    if (!active_role) return false;
+
+    for (const auto& pattern : active_role->blocked_resources) {
+        if (wildcard_match(pattern, resource_uri)) return false;
+    }
+
+    if (active_role->allowed_resources.empty()) return true;
+    
+    for (const auto& pattern : active_role->allowed_resources) {
+        if (wildcard_match(pattern, resource_uri)) return true;
+    }
+
+    return false;
+}
+
+} // namespace luotsi::internal

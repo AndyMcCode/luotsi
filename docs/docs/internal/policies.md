@@ -62,3 +62,61 @@ nodes:
 ```
 
 This prevents Luotsi from querying those capabilities during auto-discovery, effectively hiding them from the entire runtime environment regardless of role.
+### Tool-Level Governance
+
+Luotsi supports granular control over which tools and resources an agent can access within an allowed MCP server. This follows a **Deny-Wins** principle: if a tool matches a pattern in `blocked_tools`, it is denied even if it matches a pattern in `allowed_tools`.
+
+#### Configuration Syntax
+
+Restrictions are defined in `policies.yaml` under each role:
+
+```yaml
+roles:
+  - name: "guest"
+    allowed_servers: ["odoo_mcp"]
+    allowed_tools:
+      - "odoo_mcp:search_*"      # Wildcard support
+      - "weather_mcp:get_forecast"
+    blocked_tools:
+      - "odoo_mcp:execute_kw"    # Explicit deny
+    allowed_resources:
+      - "odoo://models"
+```
+
+#### Wildcard Matching
+- `*`: Matches everything.
+- `prefix:*`: Matches any tool/resource starting with the prefix.
+- `exact_name`: Matches only that specific tool/resource.
+
+#### Policy Enforcement Layers
+1. **Discovery Filtering**: Luotsi intercepts `tools/list` and `resources/list` calls and removes unauthorized items. The agent never "sees" blocked tools.
+2. **Execution Blocking**: Every `tools/call` and `resources/read` on the message bus is validated. Unauthorized calls are rejected with error code `-32001`.
+
+## Role Delegation (On-Behalf-Of)
+
+Role Delegation allows a trusted node (e.g., a multi-tenant gateway or agent) to act on behalf of another role. This is essential for multi-user scenarios where a single agent instance handles requests for users with varying permission levels.
+
+### Trusted Sources (`is_trusted`)
+
+Only roles marked as `is_trusted: true` in `policies.yaml` are permitted to perform role delegation. 
+
+```yaml
+roles:
+  - name: "whatsapp_gateway"
+    secret_key: "gateway_secret_123"
+    is_trusted: true
+    allowed_servers: ["*"]
+```
+
+### Delegation Metadata (`__luotsi_role__`)
+
+To delegate, a trusted source includes the `__luotsi_role__` metadata in its JSON message payload.
+
+1.  **Ingress**: A gateway (e.g., WhatsApp Mock) identifies an end-user and injects `"__luotsi_role__": "guest"` into the message.
+2.  **Detection**: The Luotsi Core extracts this value into the internal `MessageFrame::delegated_role` field.
+3.  **Governance**: If the source node is `is_trusted`, the Core switches the *active role* to the delegated role for all policy checks (token limits, server access).
+4.  **Propagation**: The Core re-injects `__luotsi_role__` when sending the message to the target (e.g., the Agent), ensuring the context is preserved across multi-hop execution.
+
+### Hierarchical Quotas
+
+When delegation occurs, Luotsi enforces the strictest combined policy. For example, if an Admin gateway is acting as a Guest, the Guest's lower `max_token_size` and restricted `allowed_servers` will be enforced for that specific interaction.

@@ -2,7 +2,14 @@
 roles:
   - name: "admin"
     secret_key: "super_secret_admin"
+    is_trusted: true
     allowed_servers: ["*"]
   - name: "guest"
     secret_key: "guest_key_123"
-    allowed_servers: ["dummy_mcp"]
+    allowed_servers: ["dummy_mcp", "odoo_mcp"]
+    allowed_tools:
+      - "dummy_mcp:*"
+      - "odoo_mcp:search_*"
+    blocked_tools:
+      - "odoo_mcp:execute_kw"
+    max_token_size: 5000

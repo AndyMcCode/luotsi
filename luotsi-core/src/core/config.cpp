@@ -22,6 +22,10 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
             config.policies_file = root["policies_file"].as<std::string>();
         }
 
+        if (root["max_token_size"]) {
+            config.max_token_size = root["max_token_size"].as<size_t>();
+        }
+
         if (root["nodes"]) {
             for (const auto& node_yaml : root["nodes"]) {
                 NodeConfig node_config;
@@ -116,6 +120,24 @@ std::expected<std::vector<PolicyRole>, std::string> Config::load_policies(const 
                         role.allowed_servers.push_back(srv.as<std::string>());
                     }
                 }
+                if (role_yaml["max_token_size"]) {
+                    role.max_token_size = role_yaml["max_token_size"].as<size_t>();
+                }
+                if (role_yaml["is_trusted"]) {
+                    role.is_trusted = role_yaml["is_trusted"].as<bool>();
+                }
+                if (role_yaml["allowed_tools"]) {
+                    for (const auto& t : role_yaml["allowed_tools"]) role.allowed_tools.push_back(t.as<std::string>());
+                }
+                if (role_yaml["blocked_tools"]) {
+                    for (const auto& t : role_yaml["blocked_tools"]) role.blocked_tools.push_back(t.as<std::string>());
+                }
+                if (role_yaml["allowed_resources"]) {
+                    for (const auto& r : role_yaml["allowed_resources"]) role.allowed_resources.push_back(r.as<std::string>());
+                }
+                if (role_yaml["blocked_resources"]) {
+                    for (const auto& r : role_yaml["blocked_resources"]) role.blocked_resources.push_back(r.as<std::string>());
+                }
                 roles.push_back(role);
             }
         }
@@ -124,6 +146,20 @@ std::expected<std::vector<PolicyRole>, std::string> Config::load_policies(const 
     } catch (const YAML::Exception& e) {
         return std::unexpected(std::string("YAML Exception loading policies: ") + e.what());
     }
+}
+
+bool wildcard_match(const std::string& pattern, const std::string& text) {
+    if (pattern == "*") return true;
+    if (pattern.empty()) return text.empty();
+    
+    // Simple suffix wildcard: "foo:*"
+    if (pattern.back() == '*') {
+        std::string prefix = pattern.substr(0, pattern.size() - 1);
+        return text.compare(0, prefix.size(), prefix) == 0;
+    }
+    
+    // Exact match
+    return pattern == text;
 }
 
 } // namespace luotsi::internal

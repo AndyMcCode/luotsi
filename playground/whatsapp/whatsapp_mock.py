@@ -41,6 +41,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'Missing "body" parameter')
                 return
 
+            # Application Logic: Mappings handled in the Integration Node
+            USER_ROLES = {
+                "+358401234567": "admin",
+                "+358509876543": "user"
+                # Unknowns default to "guest"
+            }
+            assigned_role = USER_ROLES.get(sender, "guest")
+
             # Construct JSON-RPC Message
             message = {
                 "jsonrpc": "2.0",
@@ -49,7 +57,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "from": sender,
                     "body": body
                 },
-                "id": msg_id_counter
+                "id": msg_id_counter,
+                "__luotsi_role__": assigned_role
             }
             msg_id_counter += 1
             # Register thread event to wait for Luotsi Core response
@@ -90,7 +99,20 @@ def run_server():
 def main():
     log("Starting WhatsApp Integration Node...")
     
-    # Start the HTTP server in a daemon thread so it runs alongside stdin blocking loop
+    # 0. Authenticate with Luotsi Core
+    import os
+    secret_key = os.environ.get("LUOTSI_SECRET_KEY", "super_secret_admin")
+    auth_msg = {
+        "jsonrpc": "2.0",
+        "method": "luotsi/authenticate",
+        "params": {"secret_key": secret_key},
+        "id": "auth_0"
+    }
+    log(f"Authenticating with Luotsi Hub using key: {secret_key}")
+    print(json.dumps(auth_msg))
+    sys.stdout.flush()
+
+    # Start the HTTP server in a daemon thread
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
     

@@ -37,6 +37,11 @@ When the Core routes a message to your agent, the Adapter writes it to the child
 {"jsonrpc": "2.0", "method": "messaging.receive", "params": {"from": "+98765", "text": "Hello"}}
 ```
 
+### Role Delegation Metadata (`__luotsi_role__`)
+The Stdio Adapter bi-directionally handles Role Delegation metadata:
+- **Ingress**: If a child process includes `__luotsi_role__` in its outgoing JSON, the adapter extracts it into the message frame for the Core Policy Engine to process (requires the sender to be `is_trusted`).
+- **Egress**: If a message arriving at the adapter has an associated `delegated_role`, the adapter re-injects it into the JSON payload as `__luotsi_role__`, allowing the child process to maintain security context.
+
 ## Best Practices
 1.  **Always use `-i`**: If you forget `-i` in `docker run`, the container's stdin closes immediately, and the adapter cannot send messages to it.
 2.  **Use `--rm`**: Let the Docker daemon clean up stopped containers to prevent resource leaks.

@@ -37,6 +37,10 @@ void JsonRpcTcpAdapter::send(const MessageFrame& frame) {
         {"target_id", frame.target_id},
         {"payload", frame.payload}
     };
+    // Propagate delegated_role if it exists
+    if (!frame.delegated_role.empty()) {
+        rpc["params"]["delegated_role"] = frame.delegated_role;
+    }
 
     std::string data = rpc.dump() + "\n"; // Newline delimited
     
@@ -88,6 +92,9 @@ void JsonRpcTcpAdapter::do_read() {
                         MessageFrame frame;
                         frame.source_id = params["source_id"].get<std::string>();
                         frame.target_id = params["target_id"].get<std::string>();
+                        if (params.contains("delegated_role")) {
+                            frame.delegated_role = params["delegated_role"].get<std::string>();
+                        }
                         frame.payload = params["payload"];
                         
                         if (on_receive_) {

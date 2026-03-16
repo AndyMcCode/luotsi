@@ -1,6 +1,7 @@
 # Luotsi Configuration for LangChain Agent + Odoo MCP Integration
 log_level: info
 audit_log: "integration_audit.jsonl"
+max_token_size: 10000
 policies_file: "playground/configs/policies.yaml"
 
 nodes:
