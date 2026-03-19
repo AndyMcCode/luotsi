@@ -16,6 +16,10 @@ Building agents is easy; integrating them safely is hard. You usually end up wri
 *   **Decoupled Architecture**: Use the **Ports and Adapters** pattern to swap transport technologies (local process, network service, database) without changing agent code.
 *   **ACP/A2A Standardization**: Standardized protocols for Agent-to-Core and Agent-to-Agent communication.
 *   **Policy Enforcement**: Define granular permissions at the boundary. If an agent tries to step out of bounds, Luotsi blocks it.
+*   **Intelligent Routing**: Use `trigger`, `namespace`, and `action` to orchestrate multi-node workflows (see [Routing Reference](file:///home/andy/code/luotsi/docs/docs/internal/routing.md)).
+*   **Master Node Fail-safe**: Designate a central node to handle all unmatched traffic, ensuring no message is lost.
+*   **Multi-Agent Orchestration**: Native support for agent-to-agent delegation and shared across-node memory.
+*   **Governance Guardrails**: Dual-layer security with "Soft" (Discovery-level) and "Hard" (Bus-level) enforcement (see [Governance Guide](file:///home/andy/code/luotsi/docs/docs/internal/governance.md)).
 *   **Traceability**: Every tool call and message is logged. You get a complete audit trail of exactly what your agent did and why.
 
 It is a simplified integration layer that keeps your agents useful, harmless, and accountable.

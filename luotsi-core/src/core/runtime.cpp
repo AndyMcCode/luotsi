@@ -81,6 +81,14 @@ void Runtime::reload_config() {
     Config new_config = result.value();
     spdlog::set_level(spdlog::level::from_str(new_config.log_level));
     spdlog::info("Config loaded from {}", config_path_);
+    // Scan for session_memory and master flags
+    session_memory_node_id_.clear();
+    for (const auto& node : new_config.nodes) {
+        if (node.session_memory) {
+            session_memory_node_id_ = node.id;
+            spdlog::info("Session memory node configured: '{}'", node.id);
+        }
+    }
 
     // Init or Update Observability
     if (new_config.audit_log) {
@@ -140,7 +148,16 @@ void Runtime::reconcile_adapters(const Config& new_config) {
     }
 
     // 2. Start New Nodes or Restarted Nodes
+    master_node_id_.clear(); // reset on each reconcile
     for (const auto& node_cfg : new_config.nodes) {
+        if (node_cfg.master) {
+            if (master_node_id_.empty()) {
+                master_node_id_ = node_cfg.id;
+                spdlog::info("Master node configured: '{}'", master_node_id_);
+            } else {
+                spdlog::error("Multiple master nodes defined! Only '{}' will be used. Ignoring '{}'.", master_node_id_, node_cfg.id);
+            }
+        }
         if (ports_.find(node_cfg.id) == ports_.end()) {
             if (is_dependency_satisfied(node_cfg, new_config)) {
                 spawn_node(node_cfg, new_config);
@@ -455,6 +472,42 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     frame.payload["id"] = orig_it->second;
                     original_ids_.erase(orig_it);
                 }
+
+                // Fork to session memory if configured
+                // Only for user-facing interactions: skip if either side is an MCP server or session memory node
+                if (!session_memory_node_id_.empty() && source_id != session_memory_node_id_) {
+                    bool source_is_mcp = false;
+                    bool target_is_mcp = false;
+                    for (const auto& node : config_.nodes) {
+                        if (node.id == source_id) source_is_mcp = node.is_mcp_server || node.session_memory;
+                        if (node.id == target)    target_is_mcp = node.is_mcp_server || node.session_memory;
+                    }
+                    if (!source_is_mcp && !target_is_mcp) {
+                        auto req_it = request_payloads_.find(global_id_str);
+                        if (req_it != request_payloads_.end()) {
+                            MessageFrame memory_frame;
+                            memory_frame.source_id = "luotsi-hub";
+                            memory_frame.target_id = session_memory_node_id_;
+                            memory_frame.payload = {
+                                {"jsonrpc", "2.0"},
+                                {"method", "luotsi/interaction"},
+                                {"params", {
+                                    {"source", target},
+                                    {"target", source_id},
+                                    {"prompt", req_it->second},
+                                    {"completion", frame.payload}
+                                }}
+                            };
+                            if (ports_.count(session_memory_node_id_)) {
+                                spdlog::info("Forking interaction to session memory: {} -> {}", target, source_id);
+                                ports_[session_memory_node_id_]->send(memory_frame);
+                            } else {
+                                spdlog::warn("Session memory node '{}' not found in ports", session_memory_node_id_);
+                            }
+                            request_payloads_.erase(req_it);
+                        }
+                    }
+                }
                 
                 frame.target_id = target;
                 target_port_it->second->send(frame);
@@ -530,6 +583,39 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                         final_frame.source_id = "luotsi-hub";
                         final_frame.target_id = agg.source_id;
                         final_frame.payload = final_response;
+
+                        // Fork to session memory if configured
+                        // Only for user-facing interactions: skip if the requester is an MCP server or session memory node
+                        if (!session_memory_node_id_.empty() && agg.source_id != session_memory_node_id_) {
+                            bool source_is_mcp = false;
+                            for (const auto& node : config_.nodes) {
+                                if (node.id == agg.source_id) {
+                                    source_is_mcp = node.is_mcp_server || node.session_memory;
+                                    break;
+                                }
+                            }
+                            if (!source_is_mcp) {
+                                MessageFrame memory_frame;
+                                memory_frame.source_id = "luotsi-hub";
+                                memory_frame.target_id = session_memory_node_id_;
+                                memory_frame.payload = {
+                                    {"jsonrpc", "2.0"},
+                                    {"method", "luotsi/interaction"},
+                                    {"params", {
+                                        {"source", agg.source_id},
+                                        {"target", "luotsi-aggregator"},
+                                        {"prompt", agg.original_request},
+                                        {"completion", final_response}
+                                    }}
+                                };
+                                if (ports_.count(session_memory_node_id_)) {
+                                    spdlog::info("Forking aggregated interaction to session memory: {} -> luotsi-aggregator", agg.source_id);
+                                    ports_[session_memory_node_id_]->send(memory_frame);
+                                } else {
+                                    spdlog::warn("Session memory node '{}' not found in ports", session_memory_node_id_);
+                                }
+                            }
+                        }
                         
                         source_port_it->second->send(final_frame);
                     }
@@ -583,10 +669,12 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
         if (frame.payload.contains("id")) {
              // NAT the ID (Create Global ID)
              nlohmann::json orig_id_val = frame.payload["id"];
-             std::string global_id = source_id + ":" + orig_id_val.dump();
+             std::string global_id_val = orig_id_val.is_string() ? orig_id_val.get<std::string>() : orig_id_val.dump();
+             std::string global_id = source_id + ":" + global_id_val;
              
              pending_requests_[global_id] = source_id;
              original_ids_[global_id] = orig_id_val;
+             request_payloads_[global_id] = frame.payload;
              
              frame.payload["id"] = global_id;
         }
@@ -603,6 +691,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 agg.source_id = source_id;
                 agg.original_id = original_ids_[base_global_id]; 
                 agg.method = method;
+                agg.original_request = frame.payload;
 
                 for (const auto& target : route.targets) {
                     if (ports_.count(target)) {
@@ -784,7 +873,30 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
         }
     }
     
-    spdlog::warn("No route found for message from {} (method: {})", source_id, method);
+    // Fallback: route to master node if configured, unless source IS the master (anti-loop)
+    if (!master_node_id_.empty()) {
+        if (source_id == master_node_id_) {
+            spdlog::warn("No route found for message from master node '{}' (method: '{}'). Dropping to prevent loop.", source_id, method);
+        } else if (ports_.count(master_node_id_)) {
+            bool source_is_agent = false;
+            for (const auto& node : config_.nodes) {
+                if (node.id == source_id) {
+                    source_is_agent = node.is_mcp_server;
+                    break;
+                }
+            }
+            if (source_is_agent) {
+                spdlog::info("No route matched for '{}' from agent '{}'. Forwarding to master node '{}'.", method, source_id, master_node_id_);
+                frame.target_id = master_node_id_;
+                frame.payload["_routed_to_master"] = true;
+                ports_[master_node_id_]->send(frame);
+            } else {
+                spdlog::warn("No route found for message from gateway '{}' (method: '{}'). Dropping.", source_id, method);
+            }
+        }
+    } else {
+        spdlog::warn("No route found for message from {} (method: {})", source_id, method);
+    }
 }
 
 void Runtime::sanitize_payload(nlohmann::json& payload, size_t limit) {

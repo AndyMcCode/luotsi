@@ -49,9 +49,12 @@ private:
     std::vector<std::string> deferred_nodes_; 
     std::map<std::string, std::string> pending_requests_; 
     std::map<std::string, nlohmann::json> original_ids_;  
+    std::map<std::string, nlohmann::json> request_payloads_; 
     std::map<std::string, PendingAggregation> pending_aggregations_; 
     
     std::vector<PolicyRole> roles_; 
+    std::string master_node_id_; // ID of the master (catch-all) node, if configured
+    std::string session_memory_node_id_; // ID of the session memory observer, if configured
     
     asio::signal_set signals_;
     std::unique_ptr<Observability> observability_;

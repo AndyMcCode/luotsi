@@ -92,8 +92,8 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def run_server():
     port = 8080
-    server = HTTPServer(('127.0.0.1', port), RequestHandler)
-    log(f"Listening for custom prompts via HTTP POST on http://127.0.0.1:{port}/message")
+    server = HTTPServer(('0.0.0.0', port), RequestHandler)
+    log(f"Listening for custom prompts via HTTP POST on http://0.0.0.0:{port}/message")
     server.serve_forever()
 
 def main():

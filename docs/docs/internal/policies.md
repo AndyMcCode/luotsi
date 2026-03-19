@@ -89,8 +89,18 @@ roles:
 - `exact_name`: Matches only that specific tool/resource.
 
 #### Policy Enforcement Layers
-1. **Discovery Filtering**: Luotsi intercepts `tools/list` and `resources/list` calls and removes unauthorized items. The agent never "sees" blocked tools.
-2. **Execution Blocking**: Every `tools/call` and `resources/read` on the message bus is validated. Unauthorized calls are rejected with error code `-32001`.
+
+Luotsi implements a two-layered defense strategy to handle both agent behavior (visibility) and system safety (enforcement).
+
+1. **Soft Guardrails (Discovery Filtering)**:
+   - **Mechanism**: Luotsi intercepts `tools/list`, `resources/list`, and `resources/templates/list` calls at the registry layer.
+   - **Goal**: Manage LLM visibility. By removing unauthorized tools before they reach the agent, we prevent the "over-informed agent" problem. If an agent doesn't see a tool in its configuration, it is unlikely to attempt a call, leading to a smoother user experience without unnecessary errors.
+   - **Timing**: Occurs during agent initialization or periodic discovery.
+
+2. **Hard Guardrails (Execution Blocking)**:
+   - **Mechanism**: Luotsi validates every `tools/call` and `resources/read` message passing through the bus.
+   - **Goal**: Absolute safety and multi-tenancy. Even if an agent "remembers" a tool from a previous session or a different user context (in shared-agent scenarios), the Hub will intercept and reject the execution if the **active delegated role** does not have permission.
+   - **Timing**: Occurs at runtime, milliseconds before a request would reach an MCP server. Unauthorized calls are rejected with error code `-32001`.
 
 ## Role Delegation (On-Behalf-Of)
 

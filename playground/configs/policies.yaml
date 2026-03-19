@@ -4,12 +4,26 @@ roles:
     secret_key: "super_secret_admin"
     is_trusted: true
     allowed_servers: ["*"]
+  - name: "user"
+    secret_key: "user_key_456"
+    allowed_servers: ["odoo_mcp", "cs_agent", "memory_mcp", "session_memory"]
+    allowed_tools:
+      - "odoo_mcp:search_*"
+      - "cs_agent:*"
+      - "memory_mcp:get_*"
+      - "session_memory:memory_recall"
+    blocked_tools:
+      - "memory_mcp:save_*"
   - name: "guest"
     secret_key: "guest_key_123"
-    allowed_servers: ["dummy_mcp", "odoo_mcp"]
+    allowed_servers: ["odoo_mcp", "cs_agent", "memory_mcp"]
     allowed_tools:
-      - "dummy_mcp:*"
       - "odoo_mcp:search_*"
+      - "cs_agent:reply"
+      - "memory_mcp:get_fact"
     blocked_tools:
       - "odoo_mcp:execute_kw"
+      - "memory_mcp:save_*"
+      - "memory_mcp:get_plan"
+      - "session_memory:*"
     max_token_size: 5000

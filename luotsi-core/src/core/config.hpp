@@ -28,6 +28,8 @@ struct RouteConfig {
 struct NodeConfig {
     std::string id;
     bool is_mcp_server = false;
+    bool master = false;
+    bool session_memory = false;
     std::vector<std::string> disabled_capabilities;
     RuntimeConfig runtime;
     std::vector<std::string> depends;

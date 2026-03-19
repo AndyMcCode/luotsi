@@ -26,6 +26,7 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
             config.max_token_size = root["max_token_size"].as<size_t>();
         }
 
+
         if (root["nodes"]) {
             for (const auto& node_yaml : root["nodes"]) {
                 NodeConfig node_config;
@@ -51,6 +52,12 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
 
                 if (node_yaml["is_mcp_server"]) {
                     node_config.is_mcp_server = node_yaml["is_mcp_server"].as<bool>();
+                }
+                if (node_yaml["master"]) {
+                    node_config.master = node_yaml["master"].as<bool>();
+                }
+                if (node_yaml["session_memory"]) {
+                    node_config.session_memory = node_yaml["session_memory"].as<bool>();
                 }
                 
                 if (node_yaml["disabled_capabilities"]) {

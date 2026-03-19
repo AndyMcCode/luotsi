@@ -4,6 +4,7 @@ import json
 import logging
 import asyncio
 import threading
+import dotenv
 from typing import Dict, Any, List
 
 from pydantic import BaseModel, Field
@@ -310,9 +311,10 @@ Formulate a complete, helpful, and concise response to the user's request using 
             await asyncio.sleep(1)
 
 if __name__ == "__main__":
+    dotenv.load_dotenv()
     if not os.getenv("GOOGLE_API_KEY"):
         logger.error("GOOGLE_API_KEY environment variable is missing!")
         sys.exit(1)
-        
+    
     agent = MCPLangChainAgent()
     asyncio.run(agent.run())
