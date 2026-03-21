@@ -11,19 +11,25 @@ roles:
       - "odoo_mcp:search_*"
       - "cs_agent:*"
       - "memory_mcp:get_*"
-      - "session_memory:memory_recall"
+      - "session_memory:get_recent_history"
     blocked_tools:
       - "memory_mcp:save_*"
   - name: "guest"
     secret_key: "guest_key_123"
-    allowed_servers: ["odoo_mcp", "cs_agent", "memory_mcp"]
+    allowed_servers: ["odoo_mcp", "cs_agent", "memory_mcp", "session_memory"]
     allowed_tools:
       - "odoo_mcp:search_*"
       - "cs_agent:reply"
       - "memory_mcp:get_fact"
+      - "session_memory:get_recent_history"
     blocked_tools:
       - "odoo_mcp:execute_kw"
       - "memory_mcp:save_*"
       - "memory_mcp:get_plan"
-      - "session_memory:*"
-    max_token_size: 5000
+    max_token_size: 20000
+  - name: "cs_worker"
+    secret_key: "cs_worker_key"
+    allowed_servers: ["odoo_mcp", "memory_mcp"]
+    allowed_tools:
+      - "odoo_mcp:search_*"
+      - "memory_mcp:get_fact"

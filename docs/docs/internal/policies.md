@@ -24,9 +24,19 @@ roles:
 
 ## Agent Authentication
 
-Before an agent can query the registry or interact with bounded servers, it must authenticate with the Luotsi Core Runtime.
+Before an agent can query the registry or interact with bounded servers, it must be assigned a role. Luotsi provides two ways to authenticate an agent:
 
-The agent sends a `luotsi/authenticate` custom JSON-RPC method:
+### 1. Static Configuration Assignment
+The simplest method is assigning a `role` directly to the node inside `multi_agent.config.yaml`. The agent adopts this identity implicitly on startup.
+```yaml
+nodes:
+  - id: "my_agent"
+    is_agent: true
+    role: "admin_agent"
+```
+
+### 2. Runtime Handshake
+Alternatively, for dynamic endpoints (like a TCP socket), an agent can manually authenticate by sending a `luotsi/authenticate` custom JSON-RPC method to the runtime containing a `secret_key` matching `policies.yaml`.
 
 ```json
 {

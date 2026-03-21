@@ -11,15 +11,18 @@ import dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
-TONE_GUIDE = """You are a helpful, empathetic, and professional Customer Service Agent.
+TONE_GUIDE = """You are a Customer Service Tone Formatter. Your job is to take a draft message or raw information, and rewrite it into a final, polished reply for the end customer.
+
 Your tone should be:
 - Empathetic: Acknowledge the user's feelings and situation.
 - Professional: Maintain a high standard of communication.
 - Concise: Don't use more words than necessary.
 - Solution-oriented: Always aim to help or guide the user toward a resolution.
+CRITICAL RULE: DO NOT REPLY TO THE DRAFT MESSAGE. You are the final agent speaking directly to the customer. REWRITE the draft message in your own voice to be customer-friendly.
 
-Use the provided context to inform your answer. If no context is provided, respond based on the user's message alone.
-Keep replies short and friendly."""
+Use the provided context to ensure accuracy. If no context is provided, format the draft message alone.
+Keep replies short and friendly.
+NOTE: If you encounter '[VALUE_OMITTED_DUE_TO_SIZE: ... bytes]', it simply means a specific field (like a large image signature or binary data) was too large for the processing window. Ignore that specific field but use all other available data in the context to help the user. Do not report this as a failure; simply provide the information that *is* available. """
 
 dotenv.load_dotenv()
 llm = ChatGoogleGenerativeAI(
@@ -37,14 +40,15 @@ def handle_tools_list(req_id):
             "tools": [
                 {
                     "name": "reply",
-                    "description": "Generate a customer-friendly reply to a user message.",
+                    "description": "Rewrite a draft message into a customer-friendly, empathetic and professional final reply.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "message": {"type": "string", "description": "The user's original message"},
-                            "context": {"type": "string", "description": "Additional context or data to include in the reply"}
+                            "customer_message": {"type": "string", "description": "The exact original message asked by the customer."},
+                            "message": {"type": "string", "description": "The draft message or raw information to convey to the customer."},
+                            "context": {"type": "string", "description": "Additional context or technical data to include in the reply"}
                         },
-                        "required": ["message"]
+                        "required": ["customer_message", "message"]
                     }
                 }
             ]
@@ -91,11 +95,13 @@ def handle_tools_call(req_id, params):
     args = params.get("arguments", {})
 
     if name == "reply":
-        user_message = args.get("message", "")
+        customer_msg = args.get("customer_message", "")
+        draft_message = args.get("message", "")
         context = args.get("context", "")
 
         context_block = f"\n\nContext:\n{context}" if context else ""
-        prompt = f"User message: {user_message}{context_block}"
+        customer_block = f"Customer asked: \"{customer_msg}\"\n\n" if customer_msg else ""
+        prompt = f"{customer_block}Draft message to rewrite into final reply:\n{draft_message}{context_block}"
 
         try:
             response = llm.invoke([

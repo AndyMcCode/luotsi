@@ -33,8 +33,8 @@ Luotsi evaluates routes in the following order for each message:
 2. **Special Actions**: If a `tools/call` or `resources/list` trigger matches an action like `mcp_call_router`, Luotsi uses internal metadata to route the call.
 3. **Master Fallback**: If no explicit route remains after policy filtering, the message goes to the `master` node.
 
-## Minimal Routing Template
-To get an agent working with MCP servers:
+## Minimal Routing Template (Legacy)
+Before the introduction of implicit routing, agents required explicit configuration:
 ```yaml
 nodes:
   - id: "agent"
@@ -45,3 +45,15 @@ nodes:
       - trigger: "tools/call"
         action: "mcp_call_router"
 ```
+
+## Implicit Agent Routing
+Instead of explicitly defining boilerplate MCP routes for tools, templates, and resources, you can natively define a node as an agent by setting `is_agent: true` and assigning it a `role`:
+
+```yaml
+nodes:
+  - id: "my_agent"
+    is_agent: true
+    role: "admin"
+```
+
+When `is_agent: true` is set, Luotsi automatically intercepts standard MCP interactions (like `tools/list`, `tools/call`, and `resources/read`) and routes them through the Zero-Trust Policy Engine. The agent's allowed servers and tools will be discovered and routed dynamically based entirely on its assigned `role` in `policies.yaml`, completely removing the need for manual `routes` arrays.

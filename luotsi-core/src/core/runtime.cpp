@@ -680,7 +680,21 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
         }
     }
 
-    for (const auto& route : source_config->routes) {
+    std::vector<RouteConfig> routes_to_evaluate = source_config->routes;
+    
+    // Implicit Agent Routes
+    if (source_config->is_agent) {
+        routes_to_evaluate.push_back({"initialize", "", {}, "mcp_registry_query", ""});
+        routes_to_evaluate.push_back({"tools/list", "", {}, "mcp_registry_query", ""});
+        routes_to_evaluate.push_back({"resources/list", "", {}, "mcp_registry_query", ""});
+        routes_to_evaluate.push_back({"resources/templates/list", "", {}, "mcp_registry_query", ""});
+        routes_to_evaluate.push_back({"prompts/list", "", {}, "mcp_registry_query", ""});
+        routes_to_evaluate.push_back({"tools/call", "", {}, "mcp_call_router", ""});
+        routes_to_evaluate.push_back({"notifications/initialized", "", {}, "fan_out_mcp", ""});
+        routes_to_evaluate.push_back({"resources/read", "", {}, "mcp_resource_router", ""});
+    }
+
+    for (const auto& route : routes_to_evaluate) {
         if (!method.empty() && (route.trigger == "*" || method.find(route.trigger) == 0)) {
             
             if (route.action == "fan_out_mcp" && frame.payload.contains("id")) {
@@ -693,7 +707,30 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 agg.method = method;
                 agg.original_request = frame.payload;
 
-                for (const auto& target : route.targets) {
+                std::vector<std::string> active_targets = route.targets;
+                
+                // Auto discovery of targets based on RBAC policy if none explicit
+                if (active_targets.empty()) {
+                    std::string active_role_name = get_active_role_name(frame, source_id);
+                    std::vector<std::string> allowed_servers;
+                    for (const auto& role : roles_) {
+                        if (role.name == active_role_name) {
+                            allowed_servers = role.allowed_servers;
+                            break;
+                        }
+                    }
+                    for (const auto& [id, port] : ports_) {
+                        if (std::dynamic_pointer_cast<ports::McpPort>(port)) {
+                            bool allowed = false;
+                            for (const auto& a : allowed_servers) {
+                                if (a == "*" || a == id) { allowed = true; break; }
+                            }
+                            if (allowed) active_targets.push_back(id);
+                        }
+                    }
+                }
+
+                for (const auto& target : active_targets) {
                     if (ports_.count(target)) {
                         agg.pending_targets.insert(target);
                     } else {
@@ -716,6 +753,29 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                      spdlog::warn("Fan-out failed: No valid ports for {}", method);
                 }
                 return;
+            } else if (route.action == "mcp_resource_router" && method == "resources/read") {
+                if (frame.payload.contains("params") && frame.payload["params"].contains("uri")) {
+                    std::string uri = frame.payload["params"]["uri"].get<std::string>();
+                    size_t pos = uri.find("://");
+                    if (pos != std::string::npos) {
+                        // Extract scheme and assume <scheme>_mcp
+                        std::string target_provider = uri.substr(0, pos) + "_mcp";
+                        
+                        auto target_port_it = ports_.find(target_provider);
+                        if (target_port_it != ports_.end()) {
+                            spdlog::info("Resource Router extracted provider {} from URI: {}", target_provider, uri);
+                            frame.target_id = target_provider;
+
+                            std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
+                            pending_requests_[global_id_str] = source_id; 
+
+                            target_port_it->second->send(frame);
+                            return;
+                        } else {
+                             spdlog::error("Resource Router failed: Target port '{}' not found for URI {}", target_provider, uri);
+                        }
+                    } 
+                }
             } else if (route.action == "mcp_call_router" && method == "tools/call") {
                 if (frame.payload.contains("params") && frame.payload["params"].contains("name")) {
                     std::string full_name = frame.payload["params"]["name"].get<std::string>();
@@ -904,7 +964,7 @@ void Runtime::sanitize_payload(nlohmann::json& payload, size_t limit) {
         std::string s = payload.get<std::string>();
         if (s.size() > limit) {
             spdlog::warn("Field exceeds max_token_size ({} > {}). Stripping.", s.size(), limit);
-            payload = "[BLOCKED: Field exceeds max_token_size]";
+            payload = "[VALUE_OMITTED_DUE_TO_SIZE: " + std::to_string(s.size()) + " bytes]";
         }
     } else if (payload.is_object()) {
         for (auto it = payload.begin(); it != payload.end(); ++it) {
@@ -918,10 +978,28 @@ void Runtime::sanitize_payload(nlohmann::json& payload, size_t limit) {
 }
 
 std::string Runtime::get_active_role_name(const MessageFrame& frame, const std::string& source_id) {
-    auto agent_port = std::dynamic_pointer_cast<ports::AgentPort>(ports_[source_id]);
-    if (!agent_port || !agent_port->isAuthenticated()) return "";
+    std::string base_role = "";
+    
+    // First, check if the node has a static role in config
+    for (const auto& node : config_.nodes) {
+        if (node.id == source_id && !node.role.empty()) {
+            base_role = node.role;
+            break;
+        }
+    }
+    
+    // Fallback to runtime authentication context if no static role
+    if (base_role.empty()) {
+        auto agent_port = std::dynamic_pointer_cast<ports::AgentPort>(ports_[source_id]);
+        if (agent_port && agent_port->isAuthenticated()) {
+            base_role = agent_port->getRole();
+        }
+    }
+    
+    if (base_role.empty()) {
+        base_role = "guest"; // Lowest privilege fallback
+    }
 
-    std::string base_role = agent_port->getRole();
     bool is_source_trusted = false;
     for (const auto& role : roles_) {
         if (role.name == base_role) {
@@ -930,9 +1008,16 @@ std::string Runtime::get_active_role_name(const MessageFrame& frame, const std::
         }
     }
 
+    // Role Delegation (e.g. from WhatsApp)
     if (!frame.delegated_role.empty() && is_source_trusted) {
         return frame.delegated_role;
     }
+    
+    // Dynamic payload role injection check (for backward compatibility before explicit delegation)
+    if (frame.payload.contains("__luotsi_role__") && is_source_trusted) {
+        return frame.payload["__luotsi_role__"].get<std::string>();
+    }
+
     return base_role;
 }
 

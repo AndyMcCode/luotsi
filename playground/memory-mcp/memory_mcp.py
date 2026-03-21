@@ -112,6 +112,7 @@ def handle_tools_list(req_id):
                         "type": "object",
                         "properties": {
                             "query": {"type": "string", "description": "The search query (e.g., 'What did the user ask about Odoo before?')"},
+                            "session_id": {"type": "string", "description": "Optional session ID to filter results (e.g. phone number)"},
                             "n": {"type": "integer", "description": "Number of results to return", "default": 3}
                         },
                         "required": ["query"]
@@ -188,17 +189,22 @@ def handle_tools_call(req_id, params):
         
     elif name == "memory_recall":
         query = args.get("query")
+        session_id = args.get("session_id")
         n = args.get("n", 3)
         if not query:
             return error(req_id, "Missing query")
         if not collection:
             return error(req_id, "ChromaDB is not available")
             
-        sys.stderr.write(f"[*] Memory Recall Query: {query}\n")
+        sys.stderr.write(f"[*] Memory Recall Query: {query} (session_id={session_id})\n")
+        
+        where_clause = {"source": session_id} if session_id else None
+        
         try:
             results = collection.query(
                 query_texts=[query],
-                n_results=n
+                n_results=n,
+                where=where_clause
             )
             output = []
             if results and results.get('documents') and results['documents']:

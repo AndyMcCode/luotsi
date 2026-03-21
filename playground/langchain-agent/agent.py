@@ -56,7 +56,7 @@ class MCPLangChainAgent:
         self.log(f"Sending via Luotsi Bus: {json_str}")
         print(json_str, flush=True)
 
-    def dispatch_mcp_tool_sync(self, name: str, arguments: dict, override_method: str = "tools/call", delegated_role: str = None) -> str:
+    def dispatch_mcp_tool_sync(self, name: str, arguments: dict, override_method: str = "tools/call", delegated_role: str = None, timeout: float = 30.0) -> str:
         """Invoked by LangChain Executor. Sends tool call to Luotsi and waits for reply."""
         self.msg_id += 1
         req_id = self.msg_id
@@ -70,7 +70,7 @@ class MCPLangChainAgent:
         self.write_rpc(override_method, params, req_id, delegated_role=delegated_role)
         
         self.log(f"Executor blocking on: {override_method} (req_id: {req_id})")
-        event.wait(timeout=30.0)
+        event.wait(timeout=timeout)
         
         self.pending_rpc_calls.pop(req_id, None)
         
@@ -85,10 +85,33 @@ class MCPLangChainAgent:
         else:
             return "Error: Tool execution timed out or failed."
 
-    def process_user_message(self, user_msg: str, reply_id: int, delegated_role: str = None):
+    def process_user_message(self, user_msg: str, reply_id: int, delegated_role: str = None, session_id: str = None):
         """The core Plan-and-Execute agent logic."""
         self.log(f"--- Starting Plan-and-Execute Run for: '{user_msg}' ---")
         
+        # 0. Proactive RAG (Memory Recall)
+        self.log("Phase 0: Proactive RAG (Memory Recall)")
+        memory_context = ""
+        try:
+            recall_args = {"query": user_msg}
+            if session_id:
+                recall_args["session_id"] = session_id
+                
+            recall_result = self.dispatch_mcp_tool_sync(
+                "session_memory__get_recent_history", 
+                recall_args, 
+                delegated_role=delegated_role,
+                timeout=10.0
+            )
+            
+            if "RECENT HISTORY" in str(recall_result):
+                memory_context = str(recall_result)
+                self.log(f"Successfully recalled memory context (len={len(memory_context)})")
+            else:
+                self.log("No relevant memory context found.")
+        except Exception as e:
+            self.log(f"Memory recall failed (ignoring): {e}")
+
         # 1. PLAN
         self.log("Phase 1: Planning")
         planner = self.llm.with_structured_output(Plan)
@@ -96,9 +119,10 @@ class MCPLangChainAgent:
         tool_descriptions = "\n".join([f"- {t['name']}: {t.get('description', 'No description')}" for t in self.tools_manifest])
         resource_descriptions = "\n".join([f"- {r.get('name', r.get('uri', ''))}: {r.get('description', 'No description')} (URI: {r.get('uri', 'N/A')})" for r in self.resources_manifest])
         template_descriptions = "\n".join([f"- {t.get('name', '')}: {t.get('description', 'No description')} (URI Template: {t.get('uriTemplate', 'N/A')})" for t in self.templates_manifest])
+        memory_block = f"\nRECENT CONVERSATION CONTEXT (Use this to answer the user if applicable):\n{memory_context}\n" if memory_context else ""
         prompt = f"""
 You are an expert planner. Create a step-by-step plan to answer the user's request.
-
+{memory_block}
 Available Tools (invoked via tools/call):
 {tool_descriptions if tool_descriptions else '(none)'}
 
@@ -110,8 +134,11 @@ Available Resource Templates (read via resources/read, fill in the {{placeholder
 
 IMPORTANT: To query Odoo data you can either use 'execute_method' tool OR use a resource template like 'odoo://search/{{model_name}}/{{domain}}' via resources/read.
 For example to list customers: resources/read with URI 'odoo://search/res.partner/[]' or 'odoo://search/res.partner/[["is_company","=",true]]'.
-To get model info: resources/read with URI 'odoo://model/{{model_name}}'.
-To get a record: resources/read with URI 'odoo://record/{{model_name}}/{{record_id}}'.
+CRITICAL INSTRUCTION: If the RECENT CONVERSATION CONTEXT fully and specifically answers the User Request (e.g., it mentions the exact product brand or stock level requested), your plan should be a single step: 'Provide the answer directly to the user using the recent conversation context.' 
+
+However, if the request asks for specific details (like a brand, price, or availability) that are NOT explicitly found in the context, you MUST plan the necessary Odoo tool/resource calls to get the live data. Do not guess or assume general information is sufficient for specific queries.
+
+FINAL STEP REQUIREMENT: Whether you are answering from context or from Odoo tools, your FINAL planned step should be to invoke the `cs_agent__reply` tool to format the raw findings into a polite, customer-facing response.
 
 User Request: {user_msg}
 """
@@ -136,6 +163,7 @@ User Request: {user_msg}
 You are an execution engine. Your ONLY job is to complete the Aim below.
 Aim: {step}
 
+{memory_block}
 Context of previous findings: {json.dumps(scratchpad)}
 
 Available Tools (action_type='tool_call'):
@@ -147,6 +175,9 @@ Available Resource Templates (action_type='resource_read', fill in placeholders 
 Available Resources (action_type='resource_read', use the URI directly):
 {json.dumps([{ 'name': r.get('name',''), 'description': r.get('description',''), 'uri': r.get('uri','') } for r in self.resources_manifest], indent=2)}
 
+Important Tool Instructions:
+- If invoking 'cs_agent__reply', you MUST supply the original user message in the 'customer_message' argument so the agent has context. The user asked: "{user_msg}"
+
 Decide how to satisfy the Aim:
 - Use action_type='tool_call' and populate tool_name + tool_arguments to call a tool.
 - Use action_type='resource_read' and populate resource_uri to read a resource (e.g. 'odoo://search/res.partner/[]').
@@ -155,7 +186,7 @@ Decide how to satisfy the Aim:
             try:
                 executor_llm = self.llm.with_structured_output(ToolCall)
                 action = executor_llm.invoke([
-                    SystemMessage(content="You are a strict execution environment. Analyze the aim, evaluate available context, and determine if an external tool invocation or resource read is required."),
+                    SystemMessage(content="You are a strict execution environment. Analyze the aim, evaluate available context, and determine if an external tool invocation or resource read is required. IMPORTANT: If you encounter data fields with the value '[VALUE_OMITTED_DUE_TO_SIZE: ... bytes]', it means the field was too large for the context window. Ignore that specific field and proceed with the rest of the available data to satisfy the Aim."),
                     HumanMessage(content=exec_prompt)
                 ])
                 
@@ -182,7 +213,8 @@ User Request: {user_msg}
 Execution Scratchpad (Steps taken and findings):
 {json.dumps(scratchpad, indent=2)}
 
-Formulate a complete, helpful, and concise response to the user's request using the findings above. Formulate it as a direct answer.
+You are the final output layer. Look at the Execution Scratchpad. The final step should contain the output from `cs_agent__reply`. 
+Output EXACTLY the customer-friendly formatted response generated by the `cs_agent` tool. Do not add any additional commentary, and do NOT mention anything about "[VALUE_OMITTED_DUE_TO_SIZE]" or large fields.
 """
         try:
             final_response = self.llm.invoke([HumanMessage(content=synth_prompt)])
@@ -236,11 +268,12 @@ Formulate a complete, helpful, and concise response to the user's request using 
             # Handle Incoming Users
             elif "method" in data and data["method"] == "messaging.incoming":
                 user_msg = data.get("params", {}).get("body", "")
+                session_id = data.get("params", {}).get("from", "")
                 reply_id = data.get("id")
                 delegated_role = data.get("__luotsi_role__")
                 
                 # Fire the sequence in a NEW thread so we don't block the stdin reader!!!
-                exec_thread = threading.Thread(target=self.process_user_message, args=(user_msg, reply_id, delegated_role), daemon=True)
+                exec_thread = threading.Thread(target=self.process_user_message, args=(user_msg, reply_id, delegated_role, session_id), daemon=True)
                 exec_thread.start()
 
     async def run(self):

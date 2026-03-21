@@ -86,8 +86,76 @@ def main():
 
             if method == "luotsi/interaction":
                 handle_interaction(params)
-            
-            # Background observer: no stdout responses
+            elif method == "initialize":
+                resp = {
+                    "jsonrpc": "2.0", "id": req.get("id"),
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "session_memory", "version": "1.0.0"}
+                    }
+                }
+                print(json.dumps(resp), flush=True)
+            elif method == "tools/list":
+                resp = {
+                    "jsonrpc": "2.0", "id": req.get("id"),
+                    "result": {
+                        "tools": [
+                            {
+                                "name": "get_recent_history",
+                                "description": "Fetch the most recent conversation history for a specific user session.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": {"type": "string", "description": "The user's session ID (e.g., phone number)"},
+                                        "limit": {"type": "integer", "description": "Number of recent interactions to retrieve", "default": 5}
+                                    },
+                                    "required": ["session_id"]
+                                }
+                            }
+                        ]
+                    }
+                }
+                print(json.dumps(resp), flush=True)
+            elif method == "tools/call":
+                req_id = req.get("id")
+                name = params.get("name", "")
+                args = params.get("arguments", {})
+                
+                if name == "get_recent_history":
+                    session_id = args.get("session_id")
+                    limit = args.get("limit", 5)
+                    
+                    if not session_id:
+                        print(json.dumps({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602, "message": "Missing session_id"}}), flush=True)
+                        continue
+                        
+                    history = []
+                    try:
+                        with open(LOG_FILE, "r") as f:
+                            lines = f.readlines()
+                            for line in reversed(lines):
+                                try:
+                                    entry = json.loads(line)
+                                    if entry.get("session_id") == session_id:
+                                        history.insert(0, entry)
+                                        if len(history) == limit:
+                                            break
+                                except:
+                                    pass
+                    except FileNotFoundError:
+                        pass
+                    
+                    formatted_history = "RECENT HISTORY:\n"
+                    if not history:
+                        formatted_history += "No previous interactions found for this session."
+                    else:
+                        for idx, h in enumerate(history):
+                            formatted_history += f"--- Turn {idx + 1} ---\nUser Prompt: {h.get('prompt')}\nAgent Reply: {h.get('response')}\n"
+                    
+                    print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": formatted_history}]}}), flush=True)
+            elif method in ("notifications/initialized", "notifications/cancelled"):
+                continue
             
         except Exception as e:
             log(f"Error handling request: {e}")

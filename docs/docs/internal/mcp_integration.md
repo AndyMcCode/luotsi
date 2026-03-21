@@ -57,7 +57,7 @@ Beyond tools, Luotsi Core discovers and caches MCP **Resources** and **Resource 
 
 To reduce latency and overhead, the Core Runtime caches the results of these discovery queries in an internal `McpRegistry`. 
 
-When an agent or client sends a capabilities query (e.g., `tools/list`) to the runtime and the routing is configured to use the `mcp_registry_query` action, Luotsi serves the response directly from its internal cache rather than forwarding the request to the upstream MCP servers. This is part of the **ACP (Agent Core Protocol)** implementation, ensuring agents see a unified, namespaced view of all tools.
+When an agent node (configured with `is_agent: true`) sends a capabilities query (e.g., `tools/list`) to the runtime, it is automatically routed using the intrinsic `mcp_registry_query` action. Luotsi serves the response directly from its internal cache rather than forwarding the request to the upstream MCP servers. This is part of the **ACP (Agent Core Protocol)** implementation, ensuring agents see a unified, namespaced view of all tools restricted strictly to their assigned policy role.
 
 ## Prefixing and Namespacing
 
