@@ -33,3 +33,8 @@ roles:
     allowed_tools:
       - "odoo_mcp:search_*"
       - "memory_mcp:get_fact"
+  - name: "gateway"
+    is_trusted: true
+    allowed_servers: []
+    allowed_tools: []
+

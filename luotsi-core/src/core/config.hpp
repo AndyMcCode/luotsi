@@ -55,6 +55,7 @@ struct Config {
     std::string log_level = "info";
     size_t max_token_size = 100000;
     std::optional<std::string> audit_log;
+    std::optional<std::string> observability_endpoint;
     std::optional<std::string> policies_file;
     std::vector<NodeConfig> nodes;
 

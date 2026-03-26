@@ -91,9 +91,11 @@ void Runtime::reload_config() {
     }
 
     // Init or Update Observability
-    if (new_config.audit_log) {
+    if (new_config.audit_log || new_config.observability_endpoint) {
         if (!observability_) {
-            observability_ = std::make_unique<Observability>(*new_config.audit_log);
+            std::string path = new_config.audit_log ? *new_config.audit_log : "";
+            std::string endpoint = new_config.observability_endpoint ? *new_config.observability_endpoint : "";
+            observability_ = std::make_unique<Observability>(path, endpoint);
         } 
         // Note: Changing audit log path at runtime not supported yet without more logic
     }
@@ -220,7 +222,7 @@ void Runtime::spawn_node(const NodeConfig& node_cfg, const Config& current_confi
                 {"clientInfo", {{"name", "luotsi-hub"}, {"version", "1.0.0"}}}
             }}
         };
-        port->send(init_frame);
+        dispatch(node_cfg.id, init_frame);
     }
 }
 
@@ -272,6 +274,19 @@ void Runtime::check_deferred_nodes(const Config& current_config) {
     }
 }
 
+void Runtime::dispatch(const std::string& target_id, luotsi::MessageFrame& frame) {
+    auto target_port_it = ports_.find(target_id);
+    if (target_port_it != ports_.end()) {
+        frame.target_id = target_id;
+        if (observability_) {
+            observability_->log_message(frame);
+        }
+        target_port_it->second->send(frame);
+    } else {
+        spdlog::warn("Dispatch failed: target '{}' not found for message from '{}'", target_id, frame.source_id);
+    }
+}
+
 void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& source_id) {
     // Lookup current config for this source
     const NodeConfig* source_config = nullptr;
@@ -285,10 +300,6 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
     if (!source_config) {
         spdlog::warn("Received message from unknown/removed node '{}'. Dropping.", source_id);
         return;
-    }
-
-    if (observability_) {
-        observability_->log_message(frame);
     }
 
     spdlog::info("Bus received from {}: {}", source_id, frame.payload.dump());
@@ -333,7 +344,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                      {"id", frame.payload["id"]},
                      {"error", {{"code", -32001}, {"message", "Access Denied: Unauthorized tool call"}}}
                  };
-                 ports_[source_id]->send(error_reply);
+                 dispatch(source_id, error_reply);
                  return;
              }
         } else if (method == "resources/read") {
@@ -349,7 +360,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                      {"id", frame.payload["id"]},
                      {"error", {{"code", -32001}, {"message", "Access Denied: Unauthorized resource access"}}}
                  };
-                 ports_[source_id]->send(error_reply);
+                 dispatch(source_id, error_reply);
                  return;
              }
         }
@@ -371,7 +382,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 notif.source_id = "luotsi-hub";
                 notif.target_id = source_id;
                 notif.payload = { {"jsonrpc", "2.0"}, {"method", "notifications/initialized"} };
-                mcp_port->send(notif);
+                dispatch(source_id, notif);
                 
                 auto is_disabled = [&](const std::string& cap) {
                     if (source_config) {
@@ -387,7 +398,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     req.source_id = "luotsi-hub";
                     req.target_id = source_id;
                     req.payload = { {"jsonrpc", "2.0"}, {"id", "__luotsi__tools__" + source_id}, {"method", "tools/list"} };
-                    mcp_port->send(req);
+                    dispatch(source_id, req);
                 }
 
                 if (!is_disabled("resources/list")) {
@@ -395,7 +406,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     req2.source_id = "luotsi-hub";
                     req2.target_id = source_id;
                     req2.payload = { {"jsonrpc", "2.0"}, {"id", "__luotsi__resources__" + source_id}, {"method", "resources/list"} };
-                    mcp_port->send(req2);
+                    dispatch(source_id, req2);
                 }
                 
                 if (!is_disabled("resources/templates/list")) {
@@ -403,7 +414,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     req3.source_id = "luotsi-hub";
                     req3.target_id = source_id;
                     req3.payload = { {"jsonrpc", "2.0"}, {"id", "__luotsi__templates__" + source_id}, {"method", "resources/templates/list"} };
-                    mcp_port->send(req3);
+                    dispatch(source_id, req3);
                 }
                 
                 if (!is_disabled("prompts/list")) {
@@ -411,7 +422,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     req4.source_id = "luotsi-hub";
                     req4.target_id = source_id;
                     req4.payload = { {"jsonrpc", "2.0"}, {"id", "__luotsi__prompts__" + source_id}, {"method", "prompts/list"} };
-                    mcp_port->send(req4);
+                    dispatch(source_id, req4);
                 }
                 return;
             } else if (global_id_str == "__luotsi__tools__" + source_id) {
@@ -500,7 +511,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                             };
                             if (ports_.count(session_memory_node_id_)) {
                                 spdlog::info("Forking interaction to session memory: {} -> {}", target, source_id);
-                                ports_[session_memory_node_id_]->send(memory_frame);
+                                dispatch(session_memory_node_id_, memory_frame);
                             } else {
                                 spdlog::warn("Session memory node '{}' not found in ports", session_memory_node_id_);
                             }
@@ -509,8 +520,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     }
                 }
                 
-                frame.target_id = target;
-                target_port_it->second->send(frame);
+                dispatch(target, frame);
                 pending_requests_.erase(it);
                 return;
             }
@@ -769,7 +779,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                             std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
                             pending_requests_[global_id_str] = source_id; 
 
-                            target_port_it->second->send(frame);
+                            dispatch(target_provider, frame);
                             return;
                         } else {
                              spdlog::error("Resource Router failed: Target port '{}' not found for URI {}", target_provider, uri);
@@ -793,7 +803,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                             std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
                             pending_requests_[global_id_str] = source_id; 
 
-                            target_port_it->second->send(frame);
+                            dispatch(target_provider, frame);
                             return;
                         } else {
                              spdlog::error("Call Router failed: Target port '{}' not found", target_provider);

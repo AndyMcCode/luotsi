@@ -1,6 +1,7 @@
 # Luotsi Multi-Agent Configuration
 log_level: info
 audit_log: "multi_agent_audit.jsonl"
+observability_endpoint: "127.0.0.1:9000"
 max_token_size: 100000
 policies_file: "playground/configs/policies.yaml"
 
@@ -14,6 +15,7 @@ nodes:
       args: ["run", "-i", "--rm", "-v", "luotsi-session-data:/app/data", "luotsi-session-memory"]
 
   - id: "whatsapp_mock"
+    role: "gateway"
     runtime:
       adapter: "stdio"
       command: "docker"

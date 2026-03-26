@@ -38,7 +38,7 @@ std::string current_time_iso8601() {
     return ss.str();
 }
 
-Observability::Observability(const std::string& log_path) : log_path_(log_path) {
+Observability::Observability(const std::string& log_path, const std::string& endpoint) : log_path_(log_path), endpoint_(endpoint) {
     if (!log_path.empty()) {
         log_stream_.open(log_path, std::ios::app);
         if (!log_stream_.is_open()) {
@@ -47,6 +47,7 @@ Observability::Observability(const std::string& log_path) : log_path_(log_path) 
             spdlog::info("Audit logging enabled to: {}", log_path);
         }
     }
+    init_udp();
 }
 
 Observability::~Observability() {
@@ -55,8 +56,33 @@ Observability::~Observability() {
     }
 }
 
+void Observability::init_udp() {
+    if (endpoint_.empty()) return;
+    try {
+        size_t colon_pos = endpoint_.find(':');
+        if (colon_pos == std::string::npos) return;
+        std::string host = endpoint_.substr(0, colon_pos);
+        int port = std::stoi(endpoint_.substr(colon_pos + 1));
+
+        io_context_ = std::make_unique<asio::io_context>();
+        udp_socket_ = std::make_unique<asio::ip::udp::socket>(*io_context_);
+        udp_socket_->open(asio::ip::udp::v4());
+        udp_endpoint_ = asio::ip::udp::endpoint(asio::ip::address::from_string(host), port);
+        spdlog::info("Observability UDP emitter enabled to {}", endpoint_);
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to init UDP observability: {}", e.what());
+    }
+}
+
+void Observability::emit_udp(const std::string& payload) {
+    if (udp_socket_ && udp_socket_->is_open()) {
+        std::error_code ec;
+        udp_socket_->send_to(asio::buffer(payload), udp_endpoint_, 0, ec);
+    }
+}
+
 void Observability::log_message(const MessageFrame& frame) {
-    if (!log_stream_.is_open()) return;
+    if (!log_stream_.is_open() && !udp_socket_) return;
 
     // CloudEvent 1.0 Structure
     nlohmann::json cloudevent;
@@ -67,15 +93,21 @@ void Observability::log_message(const MessageFrame& frame) {
     cloudevent["time"] = current_time_iso8601();
     cloudevent["datacontenttype"] = "application/json";
     
+    if (!frame.source_id.empty()) cloudevent["luotsisource"] = frame.source_id;
+    if (!frame.target_id.empty()) cloudevent["luotsitarget"] = frame.target_id;
+    
     cloudevent["data"] = {
-        {"source_id", frame.source_id},
-        {"target_id", frame.target_id},
         {"delegated_role", frame.delegated_role},
         {"payload", frame.payload}
     };
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    log_stream_ << cloudevent.dump() << std::endl;
+    std::string dump = cloudevent.dump();
+    emit_udp(dump);
+
+    if (log_stream_.is_open()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        log_stream_ << dump << std::endl;
+    }
 }
 
 } // namespace luotsi::internal

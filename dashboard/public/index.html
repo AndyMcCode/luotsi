@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Luotsi Observability Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-wrapper">
+        <header class="topbar">
+            <div class="brand">
+                <div class="orb"></div>
+                <h1>Luotsi <span class="gradient-text">Engine</span></h1>
+            </div>
+            <div class="connection-status">
+                <div class="pulse-dot" id="ws-dot"></div>
+                <span id="ws-status">Connecting...</span>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <nav class="channel-tabs">
+                <button class="tab active" data-channel="network">
+                    <span class="icon">⎈</span> Node Network
+                </button>
+                <div class="tab-separator">Events Stream</div>
+                <button class="tab" data-channel="all">
+                    <span class="icon">∞</span> All Events
+                </button>
+                <button class="tab" data-channel="jsonrpc">
+                    <span class="icon">⇌</span> JSON-RPC Core
+                </button>
+                <button class="tab" data-channel="mcp">
+                    <span class="icon">⚡</span> MCP Protocol
+                </button>
+            </nav>
+
+            <!-- Network Visualization Pane -->
+            <section class="network-glass" id="network-section">
+                <div class="network-header">
+                    <h2>Live Intelligence Topology</h2>
+                    <p>Real-time node capabilities and heartbeat tracking.</p>
+                </div>
+                <div class="network-grid" id="node-grid">
+                    <!-- Node Cards dynamically injected here -->
+                </div>
+            </section>
+
+            <!-- Terminal Pane -->
+            <section class="terminal-glass" id="terminal-section" style="display: none;">
+                <div class="terminal-header">
+                    <div class="window-controls">
+                        <span class="ctrl close"></span>
+                        <span class="ctrl min"></span>
+                        <span class="ctrl max"></span>
+                    </div>
+                    <div class="terminal-title">live_stream.log</div>
+                    <div class="auto-scroll-toggle">
+                        <label>
+                            <input type="checkbox" id="autoscroll" checked> Auto-scroll
+                        </label>
+                    </div>
+                </div>
+                <div class="terminal-body" id="terminal-output">
+                    <div class="log-row system">
+                        <span class="time">[SYSTEM]</span>
+                        <span class="message">Waiting for incoming telemetry...</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+    
+    <script src="js/app.js"></script>
+</body>
+</html>

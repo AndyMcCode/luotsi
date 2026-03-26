@@ -46,3 +46,8 @@ integration_audit.jsonl
 
 #vscode
 .vscode/
+
+multi_agent_audit.jsonl
+
+# Web app
+dashboard/node_modules

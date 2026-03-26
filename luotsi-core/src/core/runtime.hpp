@@ -23,6 +23,7 @@ public:
     void stop(); 
 
 private:
+    void dispatch(const std::string& target_id, luotsi::MessageFrame& frame);
     void route_message(luotsi::MessageFrame& frame, const std::string& source_id);
     void reload_config();
     void reconcile_adapters(const Config& new_config);

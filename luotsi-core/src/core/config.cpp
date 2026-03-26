@@ -18,6 +18,10 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
             config.audit_log = root["audit_log"].as<std::string>();
         }
         
+        if (root["observability_endpoint"]) {
+            config.observability_endpoint = root["observability_endpoint"].as<std::string>();
+        }
+
         if (root["policies_file"]) {
             config.policies_file = root["policies_file"].as<std::string>();
         }

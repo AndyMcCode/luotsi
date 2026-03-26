@@ -21,5 +21,6 @@ Building agents is easy; integrating them safely is hard. You usually end up wri
 *   **Multi-Agent Orchestration**: Native support for agent-to-agent delegation and shared across-node memory.
 *   **Governance Guardrails**: Dual-layer security with "Soft" (Discovery-level) and "Hard" (Bus-level) enforcement (see [Governance Guide](file:///home/andy/code/luotsi/docs/docs/internal/governance.md)).
 *   **Traceability**: Every tool call and message is logged. You get a complete audit trail of exactly what your agent did and why.
+*   **Visual Observability Dashboard**: A real-time, glassmorphic Node.js and WebSockets based UI that natively intercept CloudEvents telemetry UDP payloads to render live functional topology mappings and stream logs.
 
 It is a simplified integration layer that keeps your agents useful, harmless, and accountable.
