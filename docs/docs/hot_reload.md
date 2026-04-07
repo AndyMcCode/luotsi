@@ -28,3 +28,4 @@ To automatically reload on file save, you can use a file watcher like `entr`:
 ```bash
 ls luotsi.config.yaml | entr -p kill -HUP $(pgrep luotsi)
 ```
+

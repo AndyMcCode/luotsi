@@ -20,7 +20,7 @@ def main():
                 else:
                     resp["error"] = {"code": -32601, "message": "Method not found"}
                 
-                print(json.dumps(resp), flush=True)
+                print(json.dumps(resp, sort_keys=True), flush=True)
         except Exception:
             pass
 

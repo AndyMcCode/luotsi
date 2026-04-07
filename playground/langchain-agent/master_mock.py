@@ -28,7 +28,7 @@ def main():
                         "serverInfo": {"name": "master_mock", "version": "1.0.0"}
                     }
                 }
-                print(json.dumps(resp), flush=True)
+                print(json.dumps(resp, sort_keys=True), flush=True)
             elif req_id is not None:
                 # Echo back for any recognized/unrecognized requests if they have an ID
                 if "params" in req and "query" in req["params"]:
@@ -45,7 +45,7 @@ def main():
                     "id": req.get("id"),
                     "result": result
                 }
-                print(json.dumps(resp), flush=True)
+                print(json.dumps(resp, sort_keys=True), flush=True)
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
 

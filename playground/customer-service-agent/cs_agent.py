@@ -158,7 +158,7 @@ def main():
             else:
                 resp = error(req_id, f"Method not found: {method}", code=-32601)
 
-            print(json.dumps(resp), flush=True)
+            print(json.dumps(resp, sort_keys=True), flush=True)
         except Exception as e:
             print(f"Error processing line: {e}", file=sys.stderr)
 

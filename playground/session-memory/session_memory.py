@@ -70,7 +70,7 @@ def handle_interaction(params):
     }
     
     with open(LOG_FILE, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+        f.write(json.dumps(entry, sort_keys=True) + "\n")
     
     log(f"Stored interaction from {source} ({len(prompt_text)} chars prompt)")
 
@@ -95,7 +95,7 @@ def main():
                         "serverInfo": {"name": "session_memory", "version": "1.0.0"}
                     }
                 }
-                print(json.dumps(resp), flush=True)
+                print(json.dumps(resp, sort_keys=True), flush=True)
             elif method == "tools/list":
                 resp = {
                     "jsonrpc": "2.0", "id": req.get("id"),
@@ -116,7 +116,7 @@ def main():
                         ]
                     }
                 }
-                print(json.dumps(resp), flush=True)
+                print(json.dumps(resp, sort_keys=True), flush=True)
             elif method == "tools/call":
                 req_id = req.get("id")
                 name = params.get("name", "")
@@ -127,7 +127,7 @@ def main():
                     limit = args.get("limit", 5)
                     
                     if not session_id:
-                        print(json.dumps({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602, "message": "Missing session_id"}}), flush=True)
+                        print(json.dumps({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602, "message": "Missing session_id"}}, sort_keys=True), flush=True)
                         continue
                         
                     history = []
@@ -153,7 +153,7 @@ def main():
                         for idx, h in enumerate(history):
                             formatted_history += f"--- Turn {idx + 1} ---\nUser Prompt: {h.get('prompt')}\nAgent Reply: {h.get('response')}\n"
                     
-                    print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": formatted_history}]}}), flush=True)
+                    print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": formatted_history}]}}, sort_keys=True), flush=True)
             elif method in ("notifications/initialized", "notifications/cancelled"):
                 continue
             

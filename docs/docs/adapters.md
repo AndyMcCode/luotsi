@@ -1,4 +1,14 @@
-# Stdio Adapter ("The Docker Pilot")
+# Adapters
+
+Adapters are responsible for the raw byte-level transport between the Luotsi Core and external nodes. They implement the [`IAdapter`](file:///home/andy/code/luotsi/luotsi-core/src/adapters/adapter.hpp) interface and sit below the [Ports layer](./ports.md), which normalizes their output into typed `MessageFrame` objects.
+
+Available adapters:
+- [Stdio Adapter](#stdio-adapter-the-docker-pilot)
+- [JSON-RPC TCP Adapter](./architecture.md#coordinated-startup-dependency-orchestration)
+
+---
+
+## Stdio Adapter ("The Docker Pilot")
 
 The **Stdio Adapter** is the primary interface for managing local child processes, especially **Docker Containers**, within the Luotsi runtime.
 
@@ -47,3 +57,11 @@ The Stdio Adapter bi-directionally handles Role Delegation metadata:
 2.  **Use `--rm`**: Let the Docker daemon clean up stopped containers to prevent resource leaks.
 3.  **Flush Stdout**: Ensure your application (Python, Node, etc.) flushes `stdout` after every message, or disable buffering (e.g., `PYTHONUNBUFFERED=1`).
 4.  **Logging**: Do NOT print logs to `stdout`! Use `stderr` for logs. The Stdio Adapter natively captures the child process's `stderr` stream asynchronously and automatically forwards it into the central `spdlog` engine, ensuring comprehensive, interwoven traceability of your agent's execution without polluting the JSON data plane on `stdout`.
+
+---
+
+## See Also
+
+- [Ports Layer](./ports.md)
+- [Architecture Overview](./architecture.md)
+- [Routing](./routing.md)
