@@ -1,0 +1,20 @@
+log_level: debug
+
+policies_file: playground/configs/policies.yaml
+
+nodes:
+  - id: inspector_gateway
+    role: admin
+    runtime:
+      adapter: stdio
+      command: node
+      args: ["playground/inspector-gateway/inspector_gateway.js"]
+    routes:
+      - trigger: "*"
+        target: mcp_node
+
+  - id: mcp_node
+    runtime:
+      adapter: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-everything"]

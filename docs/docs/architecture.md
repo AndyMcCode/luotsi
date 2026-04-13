@@ -103,3 +103,19 @@ Routing is driven by the `routes` list in YAML. Key actions include:
 
 ## Coordinated Startup (Dependency Orchestration)
 The Core manages dependencies using the `depends` configuration. It defers spawning nodes until their required ports/adapters (and their discovery handshakes) are fully ready.
+
+## Architectural Philosophy: Switch Fabric vs Edge Gateway
+
+A common question is how Luotsi differs from an MCP Proxy like **AgentGateway**. They represent two distinct architectural patterns:
+
+### The Pull/Proxy Pattern (AgentGateway)
+An API Gateway pattern optimized for routing external network traffic.
+- **Outside-In Networking:** Acts as an edge server binding to TCP ports (e.g., HTTP/SSE) and waits for external connections.
+- **HTTP Awareness:** The core proxy contains built-in routing logic for HTTP, SSE, and WebSockets.
+- **Best Use Case:** Serving as the public "front door" for multiple external clients accessing an internal fleet of servers.
+
+### The Push/Orchestrator Pattern (Luotsi)
+An Operating System / Switch Fabric pattern optimized for security and strict internal orchestration.
+- **Inside-Out Networking:** Luotsi actively *spawns* components as child processes and governs their `stdio` pipelines. It does not wait for clients to connect.
+- **Protocol Agnostic:** The core `C++` binaries do not understand HTTP. They route pure JSON-RPC. To expose Luotsi to the web, you configure an "Edge Node" child process (such as the WhatsApp Gateway or an Inspector Gateway) whose sole job is translating between HTTP and Luotsi's `stdio` bus.
+- **Best Use Case:** Securing, observing, and enforcing granular RBAC policies between heterogeneous local components (LLM Agents, Tools, Memory) without exposing unnecessary attack surfaces to the network layer.
