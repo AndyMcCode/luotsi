@@ -82,6 +82,12 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
                     }
                 }
 
+                if (node_yaml["allowed_roots"]) {
+                    for (const auto& root_path : node_yaml["allowed_roots"]) {
+                        node_config.allowed_roots.push_back(root_path.as<std::string>());
+                    }
+                }
+
                 if (node_yaml["routes"]) {
                     for (const auto& route_yaml : node_yaml["routes"]) {
                         RouteConfig route_config;
@@ -154,6 +160,9 @@ std::expected<std::vector<PolicyRole>, std::string> Config::load_policies(const 
                 }
                 if (role_yaml["blocked_resources"]) {
                     for (const auto& r : role_yaml["blocked_resources"]) role.blocked_resources.push_back(r.as<std::string>());
+                }
+                if (role_yaml["allowed_methods"]) {
+                    for (const auto& m : role_yaml["allowed_methods"]) role.allowed_methods.push_back(m.as<std::string>());
                 }
                 roles.push_back(role);
             }

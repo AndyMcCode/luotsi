@@ -21,3 +21,21 @@ Luotsi follows a **"Deny-Wins"** strategy combined with **Least Privilege**:
 1. If a tool matches a `blocked_tools` pattern, it is rejected (Hard Block).
 2. If it does not match an `allowed_tools` pattern (when explicit allows are used), it is rejected.
 3. Access is only granted if it passes both the discovery filter and the bus-level check.
+
+## 3. Outbound Protocol Enforcement ("Method Sandboxing")
+
+In addition to restricting *what* resources an agent can access, the Policy Engine actively restricts the physical JSON-RPC *methods* an entity is permitted to emit from its container perimeter via `allowed_methods`.
+
+- **How it works**: Evaluated before packet routing, the Native Engine scans the `method` parameter of the JSON-RPC packet against the source node's role profile.
+- **Goal**: Severely restricts payload scope for "Dumb Systems". For example, an MCP Resource Server should only emit notifications and capability requests; it shouldn't issue functional command invocations. 
+- **Configuration**: Set via `allowed_methods` in `policies.yaml`. If unspecified, agents default to unconstrained methods to preserve existing functionality.
+- **Error Response**: Interdictions automatically construct a `-32001 Access Denied` JSON-RPC fault sequence routed reliably to the offending node to orchestrate state recovery.
+
+```yaml
+roles:
+  - name: "sandbox_mcp_server"
+    allowed_methods:
+      - "notifications/*"
+      - "roots/list"
+    # All other methods (tools/call, initialization, etc) will be strictly blocked on outbound!
+```

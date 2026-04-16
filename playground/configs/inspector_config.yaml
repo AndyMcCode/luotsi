@@ -14,6 +14,8 @@ nodes:
         target: mcp_node
 
   - id: mcp_node
+    role: mcp_server
+    allowed_roots: ["/home"]
     runtime:
       adapter: stdio
       command: npx

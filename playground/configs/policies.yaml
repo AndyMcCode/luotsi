@@ -37,4 +37,7 @@ roles:
     is_trusted: true
     allowed_servers: []
     allowed_tools: []
-
+  - name: "mcp_server"
+    allowed_methods:
+      - "notifications/*"
+      - "roots/list"

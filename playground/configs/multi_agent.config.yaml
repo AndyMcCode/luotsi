@@ -60,7 +60,9 @@ nodes:
       adapter: stdio
       command: docker
       args: ["run", "-i", "--rm", "-e", "GOOGLE_API_KEY", "luotsi-cs-agent"]
-    routes: []
+    routes:
+      - trigger: "notifications/progress"
+        target: "langchain_agent"
 
   - id: "memory_mcp"
     is_mcp_server: true
@@ -68,7 +70,9 @@ nodes:
       adapter: stdio
       command: docker
       args: ["run", "-i", "--rm", "-v", "luotsi-chroma:/app/chroma_db", "luotsi-memory-mcp"]
-    routes: []
+    routes:
+      - trigger: "notifications/progress"
+        target: "langchain_agent"
 
   - id: "odoo_mcp"
     is_mcp_server: true
@@ -76,7 +80,9 @@ nodes:
       adapter: stdio
       command: docker
       args: ["run", "-i", "--rm", "--env-file", "playground/mcp-odoo/.env", "luotsi-playground-odoo"]
-    routes: []
+    routes:
+      - trigger: "notifications/progress"
+        target: "langchain_agent"
 
   - id: "dummy_mcp"
     is_mcp_server: true
@@ -84,7 +90,9 @@ nodes:
       adapter: "stdio"
       command: "python3"
       args: ["playground/dummy-mcp/dummy_mcp.py"]
-    routes: []
+    routes:
+      - trigger: "notifications/progress"
+        target: "langchain_agent"
 
   - id: "test_port"
     is_mcp_server: true
@@ -92,4 +100,6 @@ nodes:
       adapter: jsonrpc_tcp
       host: "127.0.0.1"
       port: 9998
-    routes: []
+    routes:
+      - trigger: "notifications/progress"
+        target: "langchain_agent"

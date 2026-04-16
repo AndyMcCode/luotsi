@@ -21,8 +21,8 @@ struct RouteConfig {
     std::string trigger; // e.g. "namespace" or "method"
     std::string target; // Node ID (for simple routing)
     std::vector<std::string> targets; // Node IDs (for fan_out_mcp)
-    std::string action; // "forward", "translate", "fan_out_mcp", "mcp_call_router"
-    std::string new_method; // The new method name if action == "translate"
+    std::string action; // "forward", "fan_out_mcp", "mcp_call_router"
+    std::string new_method; // The new method name if translating
 };
 
 struct NodeConfig {
@@ -35,6 +35,7 @@ struct NodeConfig {
     std::vector<std::string> disabled_capabilities;
     RuntimeConfig runtime;
     std::vector<std::string> depends;
+    std::vector<std::string> allowed_roots;
     std::vector<RouteConfig> routes;
     // Policies could go here later
 };
@@ -49,6 +50,7 @@ struct PolicyRole {
     std::vector<std::string> blocked_tools;
     std::vector<std::string> allowed_resources;
     std::vector<std::string> blocked_resources;
+    std::vector<std::string> allowed_methods;
 };
 
 struct Config {

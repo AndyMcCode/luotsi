@@ -112,6 +112,22 @@ Luotsi implements a two-layered defense strategy to handle both agent behavior (
    - **Goal**: Absolute safety and multi-tenancy. Even if an agent "remembers" a tool from a previous session or a different user context (in shared-agent scenarios), the Hub will intercept and reject the execution if the **active delegated role** does not have permission.
    - **Timing**: Occurs at runtime, milliseconds before a request would reach an MCP server. Unauthorized calls are rejected with error code `-32001`.
 
+### Outbound Method Governance (`allowed_methods`)
+
+To restrict the fundamental protocol capabilities of a node, you can define exactly which JSON-RPC outbound methods a role is allowed to emit using `allowed_methods`.
+
+This is incredibly powerful for locking down "dumb" nodes (like external MCP servers) to ensure they only broadcast status updates and cannot mistakenly or maliciously invoke active procedures.
+
+```yaml
+roles:
+  - name: "sandbox_mcp_server"
+    allowed_methods:
+      - "notifications/*"
+      - "roots/list"
+    # An MCP server should never emit 'tools/call'. By omitting it here, it is strictly denied.
+```
+*Note: If `allowed_methods` is entirely omitted from a role definition, Luotsi defaults to allowing all methods to preserve backward compatibility with legacy Agents.*
+
 ## Role Delegation (On-Behalf-Of)
 
 Role Delegation allows a trusted node (e.g., a multi-tenant gateway or agent) to act on behalf of another role. This is essential for multi-user scenarios where a single agent instance handles requests for users with varying permission levels.

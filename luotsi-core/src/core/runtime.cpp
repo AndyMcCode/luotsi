@@ -675,6 +675,121 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
             }
             return;
         }
+        // --- NATIVE PROTOCOL ENGINE & RBAC ---
+        if (!method.empty() && method != "luotsi/authenticate") {
+            std::string active_role_name = get_active_role_name(frame, source_id);
+            const PolicyRole* active_role = nullptr;
+            for (const auto& r : roles_) {
+                if (r.name == active_role_name) { active_role = &r; break; }
+            }
+            
+            bool method_allowed = false;
+            if (active_role && !active_role->allowed_methods.empty()) {
+                for (const auto& m : active_role->allowed_methods) {
+                    if (wildcard_match(m, method)) { method_allowed = true; break; }
+                }
+            } else {
+                method_allowed = true; // Default allow for backward compatibility if no allowed_methods specified
+            }
+
+            if (!method_allowed) {
+                spdlog::warn("Access Denied: Role '{}' attempted unpermitted outgoing method '{}'", active_role_name, method);
+                if (frame.payload.contains("id")) {
+                    MessageFrame error_reply;
+                    error_reply.source_id = "luotsi-hub";
+                    error_reply.target_id = source_id;
+                    error_reply.payload = { {"jsonrpc", "2.0"}, {"id", frame.payload["id"]}, {"error", {{"code", -32001}, {"message", "Access Denied: Unpermitted outgoing method"}}} };
+                    if (ports_.count(source_id)) ports_[source_id]->send(error_reply);
+                }
+                return;
+            }
+
+            // Pre-evaluate routes to detect explicit overrides
+            std::vector<RouteConfig> pre_eval_routes = source_config ? source_config->routes : std::vector<RouteConfig>();
+            bool has_exact_route = false;
+            for (const auto& route : pre_eval_routes) {
+                 if (!route.trigger.empty() && route.trigger != "*" && method.find(route.trigger) == 0) { 
+                     has_exact_route = true; 
+                     break; 
+                 }
+            }
+
+            if (!has_exact_route) {
+                // Native Hooks
+                if (method == "roots/list") {
+                    spdlog::info("Serving roots internally for {}", source_id);
+                    nlohmann::json roots_array = nlohmann::json::array();
+                    if (source_config && !source_config->allowed_roots.empty()) {
+                        for (const auto& path : source_config->allowed_roots) {
+                            roots_array.push_back({
+                                {"uri", "file://" + path},
+                                {"name", path}
+                            });
+                        }
+                    }
+                    MessageFrame reply_frame;
+                    reply_frame.source_id = "luotsi-hub";
+                    reply_frame.target_id = source_id;
+                    reply_frame.payload = {
+                        {"jsonrpc", "2.0"},
+                        {"id", frame.payload.contains("id") ? frame.payload["id"] : nullptr},
+                        {"result", {{"roots", roots_array}}}
+                    };
+                    if (ports_.count(source_id)) ports_[source_id]->send(reply_frame);
+                    return;
+                }
+
+                if (method.find("notifications/") == 0) {
+                    if (method == "notifications/tools/list_changed" || 
+                        method == "notifications/resources/list_changed" || 
+                        method == "notifications/prompts/list_changed") {
+                        
+                        spdlog::info("Refreshing MCP capabilities triggered by {} from {}", method, source_id);
+                        std::string target_method;
+                        std::string target_id;
+                        
+                        if (method == "notifications/tools/list_changed") {
+                            target_method = "tools/list";
+                            target_id = "__luotsi__tools__" + source_id;
+                        } else if (method == "notifications/resources/list_changed") {
+                            target_method = "resources/list";
+                            target_id = "__luotsi__resources__" + source_id;
+                        } else {
+                            target_method = "prompts/list";
+                            target_id = "__luotsi__prompts__" + source_id;
+                        }
+
+                        auto is_disabled = [&](const std::string& cap) {
+                            if (source_config) {
+                                for (const auto& d : source_config->disabled_capabilities) {
+                                    if (d == cap) return true;
+                                }
+                            }
+                            return false;
+                        };
+
+                        if (!is_disabled(target_method)) {
+                            MessageFrame req;
+                            req.source_id = "luotsi-hub";
+                            req.target_id = source_id;
+                            req.payload = { {"jsonrpc", "2.0"}, {"id", target_id}, {"method", target_method} };
+                            if (ports_.count(source_id)) ports_[source_id]->send(req);
+                        }
+                        return;
+                    }
+                    
+                    // Check if routed by wildcard. If not, absorb natively.
+                    bool explicitly_routed = false;
+                    for (const auto& route : pre_eval_routes) {
+                         if (route.trigger == "*" || method.find(route.trigger) == 0) { explicitly_routed = true; break; }
+                    }
+                    if (!explicitly_routed) {
+                        spdlog::debug("Absorbing standard notification natively: {} from {}", method, source_id);
+                        return;
+                    }
+                }
+            }
+        }
 
         if (frame.payload.contains("id")) {
              // NAT the ID (Create Global ID)
@@ -691,6 +806,8 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
     }
 
     std::vector<RouteConfig> routes_to_evaluate = source_config->routes;
+    
+    // --- NATIVE PROTOCOL ENGINE & RBAC --- (Moved up)
     
     // Implicit Agent Routes
     if (source_config->is_agent) {
@@ -920,7 +1037,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 if (target_port_it != ports_.end()) {
                     spdlog::info("Routing Request {} -> {}", source_id, route.target);
                     
-                    if (route.action == "translate" && !route.new_method.empty()) {
+                    if (!route.new_method.empty()) {
                         spdlog::info("Translating method '{}' -> '{}'", method, route.new_method);
                         frame.payload["method"] = route.new_method;
                     }
