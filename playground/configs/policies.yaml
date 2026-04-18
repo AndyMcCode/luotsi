@@ -4,6 +4,11 @@ roles:
     secret_key: "super_secret_admin"
     is_trusted: true
     allowed_servers: ["*"]
+    allowed_methods: ["*"]
+  - name: "agent"
+    secret_key: "sk-remote-agent-abc"
+    allowed_servers: ["*"]
+    allowed_methods: ["tools/call"]
   - name: "user"
     secret_key: "user_key_456"
     allowed_servers: ["odoo_mcp", "cs_agent", "memory_mcp", "session_memory"]

@@ -119,3 +119,16 @@ An Operating System / Switch Fabric pattern optimized for security and strict in
 - **Inside-Out Networking:** Luotsi actively *spawns* components as child processes and governs their `stdio` pipelines. It does not wait for clients to connect.
 - **Protocol Agnostic:** The core `C++` binaries do not understand HTTP. They route pure JSON-RPC. To expose Luotsi to the web, you configure an "Edge Node" child process (such as the WhatsApp Gateway or an Inspector Gateway) whose sole job is translating between HTTP and Luotsi's `stdio` bus.
 - **Best Use Case:** Securing, observing, and enforcing granular RBAC policies between heterogeneous local components (LLM Agents, Tools, Memory) without exposing unnecessary attack surfaces to the network layer.
+
+## Observability Layer
+
+The Luotsi Core contains a built-in `Observability` subsystem (`src/core/observability.cpp`) that emits structured telemetry as [CloudEvents 1.0](https://cloudevents.io/) over UDP. This layer is architecturally **outside** the primary message routing path — it receives completed `MessageFrame` and `PendingRequestState` data after routing decisions are made, so it can never block or perturb the core event loop.
+
+Two signal types are produced:
+
+- **`luotsi.message`** — emitted on every `dispatch()` call, providing a per-hop record of all traffic on the bus.
+- **`luotsi.telemetry.span`** — emitted when a `tools/call` (or any statefully tracked request/response cycle) completes. Contains W3C `traceparent` context, `duration_ms`, and OpenTelemetry `gen_ai.*` semantic attributes.
+
+The W3C `traceparent` header is extracted from incoming frames at the adapter edge (in `params._meta.traceparent`) and re-injected into outbound frames by `dispatch()`, enabling distributed trace continuity across agents, Luotsi, and downstream MCP servers.
+
+For full detail see [Observability & OpenTelemetry](observability.md).

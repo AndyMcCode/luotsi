@@ -16,13 +16,23 @@ async def handle_client(reader, writer):
 
             try:
                 rpc = json.loads(line)
-                if rpc.get("method") == "luotsi.forward":
-                    params = rpc.get("params")
+                # Generic echo: reply to any request that carries an 'id'
+                if "id" in rpc:
+                    reply = {
+                        "jsonrpc": "2.0",
+                        "id": rpc["id"],
+                        "result": {
+                            "method": "chat.reply",
+                            "text": f"Echo: {json.dumps(rpc.get('params', {}))}"
+                        }
+                    }
+                    writer.write((json.dumps(reply) + "\n").encode())
+                    await writer.drain()
+                elif rpc.get("method") == "luotsi.forward":
+                    params = rpc.get("params", {})
                     source = params.get("source_id")
                     target = params.get("target_id")
-                    payload = params.get("payload")
-
-                    # Swap source/target for reply
+                    payload = params.get("payload", {})
                     reply = {
                         "jsonrpc": "2.0",
                         "method": "luotsi.forward",

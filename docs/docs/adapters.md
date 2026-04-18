@@ -47,10 +47,18 @@ When the Core routes a message to your agent, the Adapter writes it to the child
 {"jsonrpc": "2.0", "method": "messaging.receive", "params": {"from": "+98765", "text": "Hello"}}
 ```
 
-### Role Delegation Metadata (`__luotsi_role__`)
-The Stdio Adapter bi-directionally handles Role Delegation metadata:
-- **Ingress**: If a child process includes `__luotsi_role__` in its outgoing JSON, the adapter extracts it into the message frame for the Core Policy Engine to process (requires the sender to be `is_trusted`).
-- **Egress**: If a message arriving at the adapter has an associated `delegated_role`, the adapter re-injects it into the JSON payload as `__luotsi_role__`, allowing the child process to maintain security context.
+### Zero-Trust adapter Edge (IAM Identity Mapping)
+Luotsi entirely eschews payload manipulation (like legacy `__luotsi_role__` injection). Instead, Roles are mapped organically within the Adapter's isolated class memory footprint.
+
+**1. Stdio (Implicit Trust):** 
+When Luotsi spawns a binary locally (like Docker or Python), its adapter implicitly trusts it and maps the identity securely straight from your `multi_agent.config.yaml` `role:` property. It activates in an `ESTABLISHED` capability state immediately.
+
+**2. TCP (Stateful Authorization):**
+External agents dialing into a `JsonRpcTcpAdapter` are untrusted. The adapter traps them in an `AUTHENTICATING` firewall state. 
+- The client must transmit exactly one authentication block during their initial JSON-RPC `initialize` handshake using `_meta: { luotsi_auth: "<secret-key>" }`.
+- Once verified, the adapter transitions to `ESTABLISHED` and tracks the session organically. **Subsequent standard MCP method calls like `tools/call` do not require (and should not include) any authentication packets.**
+
+This guarantees native payload integrity and makes Luotsi entirely 100% compliant with standard MCP JSON-RPC 2.0 communication.
 
 ## Best Practices
 1.  **Always use `-i`**: If you forget `-i` in `docker run`, the container's stdin closes immediately, and the adapter cannot send messages to it.

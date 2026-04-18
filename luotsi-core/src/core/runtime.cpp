@@ -188,7 +188,7 @@ void Runtime::spawn_node(const NodeConfig& node_cfg, const Config& current_confi
         return;
     }
 
-    adapter->init(node_cfg.runtime);
+    adapter->init(node_cfg, roles_);
     
     // Create the appropriate Port
     std::shared_ptr<ports::IPort> port;
@@ -278,6 +278,16 @@ void Runtime::dispatch(const std::string& target_id, luotsi::MessageFrame& frame
     auto target_port_it = ports_.find(target_id);
     if (target_port_it != ports_.end()) {
         frame.target_id = target_id;
+        
+        if (!frame.trace_id.empty() && !frame.span_id.empty()) {
+            std::string traceparent = "00-" + frame.trace_id + "-" + frame.span_id + "-01";
+            if (frame.payload.contains("params") && frame.payload["params"].is_object()) {
+                frame.payload["params"]["_meta"]["traceparent"] = traceparent;
+            } else {
+                frame.payload["_meta"]["traceparent"] = traceparent;
+            }
+        }
+
         if (observability_) {
             observability_->log_message(frame);
         }
@@ -471,7 +481,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
         // Check for normal request/response tracking
         auto it = pending_requests_.find(global_id_str);
         if (it != pending_requests_.end()) {
-            std::string target = it->second;
+            std::string target = it->second.source_id;
             // Validate target still exists
             auto target_port_it = ports_.find(target);
             if (target_port_it != ports_.end()) {
@@ -521,6 +531,13 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 }
                 
                 dispatch(target, frame);
+                
+                if (observability_) {
+                    auto duration = std::chrono::steady_clock::now() - it->second.start_time;
+                    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+                    observability_->log_span(it->second, frame, duration_ms);
+                }
+
                 pending_requests_.erase(it);
                 return;
             }
@@ -678,21 +695,8 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
         // --- NATIVE PROTOCOL ENGINE & RBAC ---
         if (!method.empty() && method != "luotsi/authenticate") {
             std::string active_role_name = get_active_role_name(frame, source_id);
-            const PolicyRole* active_role = nullptr;
-            for (const auto& r : roles_) {
-                if (r.name == active_role_name) { active_role = &r; break; }
-            }
             
-            bool method_allowed = false;
-            if (active_role && !active_role->allowed_methods.empty()) {
-                for (const auto& m : active_role->allowed_methods) {
-                    if (wildcard_match(m, method)) { method_allowed = true; break; }
-                }
-            } else {
-                method_allowed = true; // Default allow for backward compatibility if no allowed_methods specified
-            }
-
-            if (!method_allowed) {
+            if (!roles_.empty() && !is_authorized(active_role_name, method)) {
                 spdlog::warn("Access Denied: Role '{}' attempted unpermitted outgoing method '{}'", active_role_name, method);
                 if (frame.payload.contains("id")) {
                     MessageFrame error_reply;
@@ -797,7 +801,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
              std::string global_id_val = orig_id_val.is_string() ? orig_id_val.get<std::string>() : orig_id_val.dump();
              std::string global_id = source_id + ":" + global_id_val;
              
-             pending_requests_[global_id] = source_id;
+             pending_requests_[global_id] = {source_id, frame.trace_id, frame.span_id, frame.parent_span_id, frame.timestamp};
              original_ids_[global_id] = orig_id_val;
              request_payloads_[global_id] = frame.payload;
              
@@ -894,7 +898,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                             frame.target_id = target_provider;
 
                             std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
-                            pending_requests_[global_id_str] = source_id; 
+                            pending_requests_[global_id_str] = {source_id, frame.trace_id, frame.span_id, frame.parent_span_id, frame.timestamp}; 
 
                             dispatch(target_provider, frame);
                             return;
@@ -918,7 +922,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                             frame.target_id = target_provider;
 
                             std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
-                            pending_requests_[global_id_str] = source_id; 
+                            pending_requests_[global_id_str] = {source_id, frame.trace_id, frame.span_id, frame.parent_span_id, frame.timestamp}; 
 
                             dispatch(target_provider, frame);
                             return;
@@ -1140,12 +1144,31 @@ std::string Runtime::get_active_role_name(const MessageFrame& frame, const std::
         return frame.delegated_role;
     }
     
-    // Dynamic payload role injection check (for backward compatibility before explicit delegation)
-    if (frame.payload.contains("__luotsi_role__") && is_source_trusted) {
-        return frame.payload["__luotsi_role__"].get<std::string>();
-    }
+    // Dynamic payload role injection check removed (Phase 2 completion)
 
     return base_role;
+}
+
+bool Runtime::is_authorized(const std::string& role_name, const std::string& method) {
+    if (role_name.empty()) return false;
+    
+    const PolicyRole* active_role = nullptr;
+    for (const auto& role : roles_) {
+        if (role.name == role_name) {
+            active_role = &role;
+            break;
+        }
+    }
+    if (!active_role) return false;
+    
+    if (active_role->allowed_methods.empty()) {
+        return true; // Default allow for backward compatibility
+    }
+    
+    for (const auto& m : active_role->allowed_methods) {
+        if (wildcard_match(m, method)) return true;
+    }
+    return false;
 }
 
 bool Runtime::is_tool_allowed(const std::string& role_name, const std::string& tool_name) {

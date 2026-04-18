@@ -2,6 +2,7 @@ log_level: debug
 
 nodes:
   - id: chat_node
+    role: admin
     runtime:
       adapter: stdio
       command: python3
@@ -11,6 +12,7 @@ nodes:
         target: mcp_node
 
   - id: mcp_node
+    role: admin
     runtime:
       adapter: stdio
       command: python3

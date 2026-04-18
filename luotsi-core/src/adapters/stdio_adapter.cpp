@@ -2,6 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <sys/wait.h>
 #include <iostream>
+#include "../core/observability.hpp"
 
 namespace luotsi::adapters {
 
@@ -12,8 +13,9 @@ StdioAdapter::~StdioAdapter() {
     stop();
 }
 
-void StdioAdapter::init(const luotsi::internal::RuntimeConfig& config) {
+void StdioAdapter::init(const luotsi::internal::NodeConfig& config, const std::vector<luotsi::internal::PolicyRole>& roles) {
     config_ = config;
+    adapter_role_ = config_.role;
 }
 
 void StdioAdapter::start() {
@@ -82,13 +84,13 @@ void StdioAdapter::spawn_process() {
         
         // Prepare args
         std::vector<const char*> args;
-        args.push_back(config_.command.c_str());
-        for (const auto& arg : config_.args) {
+        args.push_back(config_.runtime.command.c_str());
+        for (const auto& arg : config_.runtime.args) {
             args.push_back(arg.c_str());
         }
         args.push_back(nullptr);
 
-        execvp(config_.command.c_str(), const_cast<char* const*>(args.data()));
+        execvp(config_.runtime.command.c_str(), const_cast<char* const*>(args.data()));
         // If execvp returns, it failed
         perror("execvp");
         exit(1);
@@ -111,9 +113,6 @@ void StdioAdapter::send(const MessageFrame& frame) {
     
     // Format: Line delimited JSON
     nlohmann::json out_json = frame.payload;
-    if (!frame.delegated_role.empty()) {
-        out_json["__luotsi_role__"] = frame.delegated_role;
-    }
     std::string data = out_json.dump() + "\n";
     ssize_t written = ::write(pipe_stdin_[1], data.c_str(), data.size());
     if (written < 0) {
@@ -142,10 +141,28 @@ void StdioAdapter::read_stdout() {
                         // Let's assume agent sends {"method": ...} (JsonRPC)
                         // This adapter wraps it into a MessageFrame for the bus.
                         frame.payload = json;
-                        if (json.contains("__luotsi_role__") && json["__luotsi_role__"].is_string()) {
-                            frame.delegated_role = json["__luotsi_role__"].get<std::string>();
-                            frame.payload.erase("__luotsi_role__");
+                        
+                        std::string traceparent = "";
+                        if (json.contains("_meta") && json["_meta"].contains("traceparent")) {
+                            traceparent = json["_meta"]["traceparent"].get<std::string>();
+                        } else if (json.contains("params") && json["params"].is_object() && json["params"].contains("_meta") && json["params"]["_meta"].contains("traceparent")) {
+                            traceparent = json["params"]["_meta"]["traceparent"].get<std::string>();
                         }
+
+                        if (!traceparent.empty() && traceparent.size() >= 55) {
+                            frame.trace_id = traceparent.substr(3, 32);
+                            frame.parent_span_id = traceparent.substr(36, 16);
+                        } else {
+                            // Strip hyphens from UUID for valid W3C trace formatting
+                            std::string uuid = luotsi::internal::generate_uuid_v4();
+                            uuid.erase(std::remove(uuid.begin(), uuid.end(), '-'), uuid.end());
+                            frame.trace_id = uuid;
+                        }
+                        
+                        std::string span_id = luotsi::internal::generate_uuid_v4();
+                        span_id.erase(std::remove(span_id.begin(), span_id.end(), '-'), span_id.end());
+                        frame.span_id = span_id.substr(0, 16);
+                        frame.timestamp = std::chrono::steady_clock::now();
                         
                         if (on_receive_) {
                             on_receive_(frame);

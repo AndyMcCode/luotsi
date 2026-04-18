@@ -62,6 +62,8 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
                 }
                 if (node_yaml["role"]) {
                     node_config.role = node_yaml["role"].as<std::string>();
+                } else if (node_config.is_mcp_server) {
+                    node_config.role = "mcp_server";
                 }
                 if (node_yaml["master"]) {
                     node_config.master = node_yaml["master"].as<bool>();

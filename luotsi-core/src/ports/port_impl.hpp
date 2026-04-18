@@ -36,18 +36,14 @@ public:
 };
 
 class GenericAgentPort : public GenericPort, public AgentPort {
-    std::string role_;
-    bool authenticated_ = false;
-
 public:
     GenericAgentPort(const std::string& id, std::shared_ptr<luotsi::adapters::IAdapter> adapter)
         : GenericPort(id, adapter) {}
 
-    bool isAuthenticated() const override { return authenticated_; }
-    std::string getRole() const override { return role_; }
+    bool isAuthenticated() const override { return adapter_->is_authenticated(); }
+    std::string getRole() const override { return adapter_->get_adapter_role(); }
     void setRole(const std::string& role) override {
-        role_ = role;
-        authenticated_ = !role.empty();
+        // Obsolete function. Edge Auth replaces explicit setting.
     }
 };
 

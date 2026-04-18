@@ -1,4 +1,5 @@
 #include "observability.hpp"
+#include "internal_types.hpp"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -100,6 +101,58 @@ void Observability::log_message(const MessageFrame& frame) {
         {"delegated_role", frame.delegated_role},
         {"payload", frame.payload}
     };
+
+    std::string dump = cloudevent.dump();
+    emit_udp(dump);
+
+    if (log_stream_.is_open()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        log_stream_ << dump << std::endl;
+    }
+}
+
+void Observability::log_span(const luotsi::PendingRequestState& req_state, const MessageFrame& response, long long duration_ms) {
+    if (!log_stream_.is_open() && !udp_socket_) return;
+
+    nlohmann::json cloudevent;
+    cloudevent["specversion"] = "1.0";
+    cloudevent["type"] = "luotsi.telemetry.span";
+    cloudevent["source"] = "luotsi-core";
+    cloudevent["id"] = generate_uuid_v4();
+    cloudevent["time"] = current_time_iso8601();
+    
+    // Core OTel CloudEvent Trace bindings
+    if (!req_state.trace_id.empty() && !req_state.span_id.empty()) {
+        cloudevent["traceparent"] = "00-" + req_state.trace_id + "-" + req_state.span_id + "-01";
+    }
+
+    cloudevent["datacontenttype"] = "application/json";
+
+    nlohmann::json attributes = {
+        {"gen_ai.system", "luotsi_switch_fabric"},
+        {"gen_ai.agent.name", req_state.source_id},
+        {"rpc.system", "jsonrpc"},
+        {"rpc.service", response.source_id}
+    };
+
+    if (response.payload.contains("error")) {
+        attributes["rpc.jsonrpc.error_code"] = response.payload["error"].contains("code") ? response.payload["error"]["code"].get<int>() : -32000;
+        cloudevent["data"] = {
+            {"name", "luotsi.route"},
+            {"kind", "SERVER"},
+            {"duration_ms", duration_ms},
+            {"status", "ERROR"},
+            {"attributes", attributes}
+        };
+    } else {
+        cloudevent["data"] = {
+            {"name", "luotsi.route"},
+            {"kind", "SERVER"},
+            {"duration_ms", duration_ms},
+            {"status", "OK"},
+            {"attributes", attributes}
+        };
+    }
 
     std::string dump = cloudevent.dump();
     emit_udp(dump);

@@ -1,6 +1,7 @@
 #include "jsonrpc_tcp_adapter.hpp"
 #include <spdlog/spdlog.h>
 #include <iostream>
+#include "../core/observability.hpp"
 
 namespace luotsi::adapters {
 
@@ -11,12 +12,17 @@ JsonRpcTcpAdapter::~JsonRpcTcpAdapter() {
     stop();
 }
 
-void JsonRpcTcpAdapter::init(const luotsi::internal::RuntimeConfig& config) {
+void JsonRpcTcpAdapter::init(const luotsi::internal::NodeConfig& config, const std::vector<luotsi::internal::PolicyRole>& roles) {
     config_ = config;
+    roles_ = roles;
+    if (!config_.role.empty()) {
+        adapter_role_ = config_.role;
+        state_ = SessionState::ESTABLISHED;
+    }
 }
 
 void JsonRpcTcpAdapter::start() {
-    spdlog::info("JsonRpcTcpAdapter '{}' starting connection to {}:{}", node_id_, config_.host, config_.port);
+    spdlog::info("JsonRpcTcpAdapter '{}' starting connection to {}:{}", node_id_, config_.runtime.host, config_.runtime.port);
     do_connect();
 }
 
@@ -28,21 +34,7 @@ void JsonRpcTcpAdapter::stop() {
 }
 
 void JsonRpcTcpAdapter::send(const MessageFrame& frame) {
-    // 1. Wrap in JSON-RPC 2.0 Notification
-    nlohmann::json rpc;
-    rpc["jsonrpc"] = "2.0";
-    rpc["method"] = "luotsi.forward";
-    rpc["params"] = {
-        {"source_id", frame.source_id},
-        {"target_id", frame.target_id},
-        {"payload", frame.payload}
-    };
-    // Propagate delegated_role if it exists
-    if (!frame.delegated_role.empty()) {
-        rpc["params"]["delegated_role"] = frame.delegated_role;
-    }
-
-    std::string data = rpc.dump() + "\n"; // Newline delimited
+    std::string data = frame.payload.dump() + "\n"; // Newline delimited
     
     asio::post(io_context_, [this, data]() {
         bool write_in_progress = !write_queue_.empty();
@@ -59,12 +51,12 @@ void JsonRpcTcpAdapter::set_on_receive(OnReceiveCallback callback) {
 
 void JsonRpcTcpAdapter::do_connect() {
     asio::ip::tcp::resolver resolver(io_context_);
-    auto endpoints = resolver.resolve(config_.host, std::to_string(config_.port));
+    auto endpoints = resolver.resolve(config_.runtime.host, std::to_string(config_.runtime.port));
 
     asio::async_connect(socket_, endpoints,
         [this](std::error_code ec, asio::ip::tcp::endpoint) {
             if (!ec) {
-                spdlog::info("JsonRpcTcpAdapter '{}' connected to {}:{}", node_id_, config_.host, config_.port);
+                spdlog::info("JsonRpcTcpAdapter '{}' connected to {}:{}", node_id_, config_.runtime.host, config_.runtime.port);
                 is_connected_ = true;
                 do_read();
                 if (!write_queue_.empty()) {
@@ -87,19 +79,104 @@ void JsonRpcTcpAdapter::do_read() {
 
                 try {
                     auto rpc = nlohmann::json::parse(line);
-                    if (rpc.contains("method") && rpc["method"] == "luotsi.forward") {
-                        auto params = rpc["params"];
+                    
+                    if (state_ == SessionState::AUTHENTICATING) {
+                        if (rpc.contains("method") && rpc["method"] == "initialize") {
+                            std::string auth_key;
+                            if (rpc.contains("params") && rpc["params"].contains("_meta") && rpc["params"]["_meta"].contains("luotsi_auth")) {
+                                auth_key = rpc["params"]["_meta"]["luotsi_auth"].get<std::string>();
+                            }
+                            
+                            bool valid = false;
+                            for (const auto& r : roles_) {
+                                if (r.secret_key == auth_key) {
+                                    adapter_role_ = r.name;
+                                    valid = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (!valid) {
+                                spdlog::warn("JsonRpcTcpAdapter '{}' auth failed with key: '{}'", node_id_, auth_key);
+                                nlohmann::json err;
+                                err["jsonrpc"] = "2.0";
+                                err["id"] = rpc.contains("id") ? rpc["id"] : nullptr;
+                                err["error"] = {{"code", -32000}, {"message", "Authentication Failed"}};
+                                std::string data = err.dump() + "\n";
+                                
+                                bool write_in_progress = !write_queue_.empty();
+                                write_queue_.push_back(data);
+                                if (is_connected_ && !write_in_progress) {
+                                    do_write();
+                                }
+                                asio::post(io_context_, [this]() {
+                                    stop();
+                                });
+                                return;
+                            } else {
+                                spdlog::info("JsonRpcTcpAdapter '{}' authenticated as role '{}'", node_id_, adapter_role_);
+                                state_ = SessionState::ESTABLISHED;
+                                
+                                MessageFrame frame;
+                                frame.source_id = node_id_;
+                                frame.payload = rpc;
+                                
+                                std::string traceparent = "";
+                                if (rpc.contains("_meta") && rpc["_meta"].contains("traceparent")) {
+                                    traceparent = rpc["_meta"]["traceparent"].get<std::string>();
+                                } else if (rpc.contains("params") && rpc["params"].is_object() && rpc["params"].contains("_meta") && rpc["params"]["_meta"].contains("traceparent")) {
+                                    traceparent = rpc["params"]["_meta"]["traceparent"].get<std::string>();
+                                }
+
+                                if (!traceparent.empty() && traceparent.size() >= 55) {
+                                    frame.trace_id = traceparent.substr(3, 32);
+                                    frame.parent_span_id = traceparent.substr(36, 16);
+                                } else {
+                                    std::string uuid = luotsi::internal::generate_uuid_v4();
+                                    uuid.erase(std::remove(uuid.begin(), uuid.end(), '-'), uuid.end());
+                                    frame.trace_id = uuid;
+                                }
+                                
+                                std::string span_id = luotsi::internal::generate_uuid_v4();
+                                span_id.erase(std::remove(span_id.begin(), span_id.end(), '-'), span_id.end());
+                                frame.span_id = span_id.substr(0, 16);
+                                frame.timestamp = std::chrono::steady_clock::now();
+
+                                if (on_receive_) on_receive_(frame);
+                            }
+                        } else {
+                            spdlog::warn("JsonRpcTcpAdapter '{}' expected initialize, got: {}", node_id_, rpc.dump());
+                            stop();
+                            return;
+                        }
+                    } else {
+                        // ESTABLISHED
                         MessageFrame frame;
-                        frame.source_id = params["source_id"].get<std::string>();
-                        frame.target_id = params["target_id"].get<std::string>();
-                        if (params.contains("delegated_role")) {
-                            frame.delegated_role = params["delegated_role"].get<std::string>();
+                        frame.source_id = node_id_;
+                        frame.payload = rpc;
+
+                        std::string traceparent = "";
+                        if (rpc.contains("_meta") && rpc["_meta"].contains("traceparent")) {
+                            traceparent = rpc["_meta"]["traceparent"].get<std::string>();
+                        } else if (rpc.contains("params") && rpc["params"].is_object() && rpc["params"].contains("_meta") && rpc["params"]["_meta"].contains("traceparent")) {
+                            traceparent = rpc["params"]["_meta"]["traceparent"].get<std::string>();
                         }
-                        frame.payload = params["payload"];
+
+                        if (!traceparent.empty() && traceparent.size() >= 55) {
+                            frame.trace_id = traceparent.substr(3, 32);
+                            frame.parent_span_id = traceparent.substr(36, 16);
+                        } else {
+                            std::string uuid = luotsi::internal::generate_uuid_v4();
+                            uuid.erase(std::remove(uuid.begin(), uuid.end(), '-'), uuid.end());
+                            frame.trace_id = uuid;
+                        }
                         
-                        if (on_receive_) {
-                            on_receive_(frame);
-                        }
+                        std::string span_id = luotsi::internal::generate_uuid_v4();
+                        span_id.erase(std::remove(span_id.begin(), span_id.end(), '-'), span_id.end());
+                        frame.span_id = span_id.substr(0, 16);
+                        frame.timestamp = std::chrono::steady_clock::now();
+
+                        if (on_receive_) on_receive_(frame);
                     }
                 } catch (const std::exception& e) {
                     spdlog::error("JsonRpcTcpAdapter '{}' failed to parse received JSON: {}", node_id_, e.what());

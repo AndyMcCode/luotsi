@@ -32,6 +32,7 @@ private:
 
     // Policy Helpers
     std::string get_active_role_name(const MessageFrame& frame, const std::string& source_id);
+    bool is_authorized(const std::string& role_name, const std::string& method);
     bool is_tool_allowed(const std::string& role_name, const std::string& tool_name);
     bool is_resource_allowed(const std::string& role_name, const std::string& resource_uri);
 
@@ -48,7 +49,7 @@ private:
     std::map<std::string, std::shared_ptr<ports::IPort>> ports_;
 
     std::vector<std::string> deferred_nodes_; 
-    std::map<std::string, std::string> pending_requests_; 
+    std::map<std::string, PendingRequestState> pending_requests_; 
     std::map<std::string, nlohmann::json> original_ids_;  
     std::map<std::string, nlohmann::json> request_payloads_; 
     std::map<std::string, PendingAggregation> pending_aggregations_; 

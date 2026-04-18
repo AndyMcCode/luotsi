@@ -2,6 +2,7 @@ log_level: debug
 
 nodes:
   - id: internal_chat
+    role: admin
     runtime:
       adapter: stdio
       command: python3
@@ -11,6 +12,7 @@ nodes:
         target: external_rpc
 
   - id: external_rpc
+    role: admin
     runtime:
       adapter: jsonrpc_tcp
       host: "127.0.0.1"

@@ -1,170 +1,98 @@
-# Multi-Tenancy & Role Delegation
+# Multi-Tenancy & Zero-Trust RBAC
 
-Luotsi supports **multi-tenancy** through a mechanism called **Role Delegation (On-Behalf-Of)**. This allows a single trusted node (e.g., a WhatsApp Gateway) to serve many end-users simultaneously, each with their own permission level, without spawning a separate process per user.
-
----
-
-## The Problem
-
-In a basic deployment, RBAC roles are bound to the **node's secret key**. A node authenticates once and always acts under its assigned role. This is fine for internal agents, but breaks down when a single gateway node routes messages from many different users with different privilege levels.
+Luotsi enforces a strictly compartmentalized **Zero-Trust Role-Based Access Control (RBAC)** architecture natively. Permissions are bound unequivocally across the transport lifecycle using physical memory isolation rather than vulnerable payload injection tricks.
 
 ---
 
-## The Solution: Role Delegation (`__luotsi_role__`)
+## The Core Concept
 
-A **trusted node** can tag any outbound message with a `__luotsi_role__` field to signal to the Core that this specific message should be treated as if it came from a *different* role.
+Luotsi operates a central **Native Policy Engine** that acts as the physical gatekeeper inside the switch fabric (`Runtime::route_message`).
 
-The Core will then apply that delegated role's policy limits (allowed tools, token size, blocked tools) for the duration of that message's lifecycle — **only if the source node has `is_trusted: true`** in `policies.yaml`.
-
----
-
-## End-to-End Flow
-
-```mermaid
-sequenceDiagram
-    participant WA as WhatsApp User
-    participant GW as wa_gateway (role: gateway, is_trusted: true)
-    participant Core as Luotsi Core
-    participant Agent as langchain_agent (role: admin)
-    participant Tool as odoo_mcp
-
-    WA->>GW: "Add Chuck Norris to contacts"
-    GW->>Core: JSON-RPC + __luotsi_role__: "guest"
-    Core->>Core: source=gateway (trusted) → active_role = "guest"
-    Core->>Core: Policy check: can guest call langchain_agent? ✓
-    Core->>Agent: Forward message + __luotsi_role__: "guest"
-    Agent->>Core: tools/call odoo_mcp (+ __luotsi_role__: "guest")
-    Core->>Core: source=agent (trusted) → active_role = "guest"
-    Core->>Core: Policy check: can guest call odoo_mcp.partner_create? ✗ BLOCKED
-    Core->>Agent: Error: Policy violation
-```
+Instead of trusting arbitrary incoming JSON-RPC methods, the routing engine identifies the physical C++ adapter port that delivered the message. It invokes a polymorphic call back to the Edge Adapter to definitively establish its memory-resident identity, and then rigorously assesses the intent against the `policies.yaml` definitions before allowing data to traverse downstream.
 
 ---
 
-## Implementation
+## Edge Authentication (The Adapters)
 
-### 1. Injection (Gateway → Core)
+Luotsi does not permit authentication parameters to bleed past the edge. All identities are verified and permanently assigned right at the adapter boundary instance.
 
-The gateway node tags each message with `__luotsi_role__` in the JSON payload before sending it to the Core. In Python:
+### 1. Stdio Adapters (Local Spawn)
+When Luotsi `fork()`s a subprocess internally (like an internal Dockerized Agent or MCP Service), the system grants inherent trust. 
 
-```python
-rpc_msg = {
-    "jsonrpc": "2.0",
-    "method": "messaging.incoming",
-    "params": {...},
-    "__luotsi_role__": "guest"   # ← injected by wa_gateway.py
-}
-```
+During initialization, the Stdio Adapter reads its designated identity string definitively from the `multi_agent.config.yaml` `role:` property. It automatically boots into an `ESTABLISHED` capability state mapped seamlessly to the core port.
 
-### 2. Extraction (Adapter Layer)
+*Note: If an internal node has `is_mcp_server: true` but omits a specific role, Luotsi automatically maps it to a safe `mcp_server` sandbox role to isolate capability lookups.*
 
-Both adapters extract `__luotsi_role__` from the raw JSON and store it in `MessageFrame::delegated_role`, then **remove** it from the payload to keep the transport clean.
+### 2. TCP Adapters (Stateful Unlocks)
+When external Agents connect over an asynchronous socket (e.g., `JsonRpcTcpAdapter`), they are inherently untrusted. The adapter drops into a rigid `AUTHENTICATING` firewall state.
 
-**[`stdio_adapter.cpp:145-147`](file:///home/andy/code/luotsi/luotsi-core/src/adapters/stdio_adapter.cpp#L145-L147)**:
-```cpp
-if (json.contains("__luotsi_role__") && json["__luotsi_role__"].is_string()) {
-    frame.delegated_role = json["__luotsi_role__"].get<std::string>();
-    frame.payload.erase("__luotsi_role__");
-}
-```
-
-### 3. Trust Check & Role Resolution (Core)
-
-In [`runtime.cpp:1013-1031`](file:///home/andy/code/luotsi/luotsi-core/src/core/runtime.cpp#L1013-L1031), the Core resolves the **effective role** for a message before policy enforcement:
-
-```cpp
-bool is_source_trusted = false;
-for (const auto& role : roles_) {
-    if (role.name == base_role) {
-        is_source_trusted = role.is_trusted;
-        break;
-    }
-}
-
-// Only honour the delegation if the source is trusted
-if (!frame.delegated_role.empty() && is_source_trusted) {
-    return frame.delegated_role;  // e.g. "guest"
-}
-
-return base_role;  // fallback to the node's own role
-```
-
-If the source node is **not** trusted, the delegated role is silently ignored and the node's own role is used instead.
-
-### 4. Context Preservation (Egress)
-
-When the Core forwards a message to the next node (e.g., the `langchain_agent`), it **re-injects** `__luotsi_role__` so the agent knows the effective role and can pass it along on subsequent tool calls.
-
-**[`stdio_adapter.cpp:114-115`](file:///home/andy/code/luotsi/luotsi-core/src/adapters/stdio_adapter.cpp#L114-L115)**:
-```cpp
-if (!frame.delegated_role.empty()) {
-    out_json["__luotsi_role__"] = frame.delegated_role;
-}
-```
-
-### 5. Observability
-
-The `delegated_role` is included as a top-level field in every CloudEvent emitted for the message, making it easy to trace user-level activity in the audit log:
+**The Handshake Protocol:**
+The agent must submit a standard JSON-RPC `initialize` block, embedding a `_meta` field holding its pre-shared secret key. 
 
 ```json
 {
-  "data": {
-    "delegated_role": "guest",
-    "payload": { ... }
-  },
-  "luotsisource": "wa_gateway",
-  "luotsitarget": "langchain_agent"
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2024-11-05",
+    "clientInfo": {"name": "external_agent"},
+    "_meta": {
+      "luotsi_auth": "sk-remote-agent-abc"
+    }
+  }
 }
 ```
 
+- If validation passes, the Adapter rips the `_meta` block off, caches the localized role in its class instance, and pushes the pure `initialize` frame backward into the central router. The connection formally advances to the `ESTABLISHED` state.
+- If an agent sends *any* other method (like `tools/call`) prior to successful initialization, or misses the correct key, the adapter throws an error and instantly snuffs the TCP connection dead.
+
+> [!IMPORTANT]  
+> After initialization is cleared, **do NOT** send `_meta` blocks. Luotsi is 100% compliant with generic MCP JSON-RPC 2.0 downstream processing natively because the TCP edge now statefully manages identity internally.
+
 ---
 
-## Policy Configuration
+## Central Routing & Enforcement
 
-Roles are defined in [`policies.yaml`](file:///home/andy/code/luotsi/playground/configs/policies.yaml). The `is_trusted` flag is the **gate** for delegation:
+Once a frame enters `Runtime::route_message`, Luotsi's core validates its intent implicitly:
+
+```cpp
+// 1. Trace the Port
+auto agent_port = std::dynamic_pointer_cast<ports::AgentPort>(ports_[source_id]);
+std::string base_role = agent_port->getRole(); // The active statefully verified role
+
+// 2. Validate Methods
+if (!is_authorized(base_role, method)) {
+    // Generates a proper native JSON-RPC (-32001) Access Denied payload dynamically back to the client!
+    return;
+}
+```
+If an unprivileged remote agent attempts an explicit system call or out-of-scope tool invocation, it is stopped instantly at the gate.
+
+---
+
+## Policy Definitions
+
+Identities and restrictions are statically loaded from `configs/policies.yaml`.
 
 ```yaml
 roles:
-  - name: "gateway"
-    is_trusted: true        # ← can delegate roles
-    allowed_servers: []     # gateway itself can't call any tools
-
-  - name: "guest"
-    allowed_servers: ["odoo_mcp", "cs_agent", "session_memory"]
-    allowed_tools:
-      - "odoo_mcp:search_*"
-      - "cs_agent:reply"
+  - name: "admin"
+    secret_key: "sk-local-admin-999"
+    allowed_servers: ["*"]
+    allowed_methods: ["*"]
+    
+  - name: "agent"
+    secret_key: "sk-remote-agent-abc"
+    allowed_servers: ["odoo_mcp", "memory_mcp"]
+    allowed_methods: ["tools/call", "resources/read"]
     blocked_tools:
-      - "odoo_mcp:execute_kw"
-    max_token_size: 20000   # ← per-role token cap
+      - "odoo_mcp:execute_kw"     # Finer-grained internal resource bounding
 ```
 
-> [!IMPORTANT]
-> A node cannot grant itself more permissions than its own role allows. If `langchain_agent` (role: `admin`) delegates `guest`, all subsequent tool calls in that message chain are limited to `guest` permissions, even though the agent itself is admin.
-
----
-
-## Roles Summary
-
-| Role        | Trusted | Can Call Tools                              | Notes                       |
-|-------------|---------|---------------------------------------------|-----------------------------|
-| `admin`     | ✓       | All servers (`*`)                           | Internal agents             |
-| `gateway`   | ✓       | None                                        | Only delegates to other roles|
-| `user`      | ✗       | `odoo_mcp`, `cs_agent`, `memory_mcp`       | Can read, cannot write facts|
-| `guest`     | ✗       | `odoo_mcp:search_*`, `cs_agent:reply`      | WhatsApp end-users; 20k token cap |
-| `cs_worker` | ✗       | `odoo_mcp:search_*`, `memory_mcp:get_fact` | CS Agent sub-tasks          |
-
----
-
-## Future: RBAC-as-a-Node
-
-For complex enterprise deployments, the Core can be configured to query an external **RBAC Node** to resolve dynamic permissions at runtime, without changing the C++ Kernel. This keeps the Core lean and protocol-agnostic.
-
----
-
-## See Also
-
-- [Policies & RBAC](./policies.md)
-- [Ports Layer](./ports.md)
-- [Architecture Overview](./architecture.md)
-- [Observability](./governance.md)
+### Constraints Supported
+| Field | Target | Description |
+|---|---|---|
+| `allowed_methods` | Global API Gatekeeper | Constrains the overarching JSON-RPC method actions permitted (e.g. `tools/call`, `resources/read`). |
+| `allowed_servers` | Routing Level | Dictates exactly which downstream MCP Ports the node is allowed to transmit toward. |
+| `allowed_tools` | Method Level | Binds execution specifically down to prefix or full method chains (e.g. `memory_mcp:get_fact`). |

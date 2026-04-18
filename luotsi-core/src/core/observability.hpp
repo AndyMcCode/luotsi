@@ -7,9 +7,16 @@
 #include <asio.hpp>
 #include "../adapters/adapter.hpp"
 
+namespace luotsi {
+    struct PendingRequestState;
+}
+
 namespace luotsi::internal {
 
 using MessageFrame = luotsi::MessageFrame;
+
+std::string generate_uuid_v4();
+std::string current_time_iso8601();
 
 class Observability {
 public:
@@ -17,6 +24,7 @@ public:
     ~Observability();
 
     void log_message(const MessageFrame& frame);
+    void log_span(const PendingRequestState& req_state, const MessageFrame& response_frame, long long duration_ms);
 
 private:
    std::string log_path_;

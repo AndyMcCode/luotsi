@@ -128,31 +128,23 @@ roles:
 ```
 *Note: If `allowed_methods` is entirely omitted from a role definition, Luotsi defaults to allowing all methods to preserve backward compatibility with legacy Agents.*
 
-## Role Delegation (On-Behalf-Of)
+## Stateful Session Integrity
 
-Role Delegation allows a trusted node (e.g., a multi-tenant gateway or agent) to act on behalf of another role. This is essential for multi-user scenarios where a single agent instance handles requests for users with varying permission levels.
+In legacy iterations, Luotsi relied on payload injection (such as attaching a `__luotsi_role__` metadata field into the JSON) to track multi-tenant identities through the message bus and downstream MCP servers.
 
-### Trusted Sources (`is_trusted`)
+Under the Zero-Trust IAM architecture, Luotsi **strictly forbids** payload manipulation to track identities, ensuring 100% compliance with the native JSON-RPC 2.0 specification without "dirty" root payload injections.
 
-Only roles marked as `is_trusted: true` in `policies.yaml` are permitted to perform role delegation. 
+### Stateful Request/Response Routing
 
-```yaml
-roles:
-  - name: "whatsapp_gateway"
-    secret_key: "gateway_secret_123"
-    is_trusted: true
-    allowed_servers: ["*"]
-```
+Luotsi eliminates the need for downstream MCP servers to mirror identities or roles back to the core. Instead, it enforces isolated session integrity through stateful memory mapping.
 
-### Delegation Metadata (`__luotsi_role__`)
+1.  **Outbound Context Binding**: When an authenticated Agent routes a request (e.g., `tools/call`) to an MCP server, the Luotsi Core intercepts the message and securely records the interaction in an internal, thread-safe `PendingRequests` table. This maps the `Request ID` directly to the `Client Node ID` and `Client Role` in memory.
+2.  **Inbound Enforcement**: When the MCP server processes the target function and emits a JSON-RPC response (identified by the matching `id` with no `method`), Luotsi catches it at the Port.
+3.  **Direct Routing**: The Core cross-references the matching `id`, retrieves the exact authenticated `Client Node ID` from memory, cleanly stamps the outbound `MessageFrame` target, and fires the payload directly back to the requester.
 
-To delegate, a trusted source includes the `__luotsi_role__` metadata in its JSON message payload.
+### Security Outcomes
 
-1.  **Ingress**: A gateway (e.g., WhatsApp Mock) identifies an end-user and injects `"__luotsi_role__": "guest"` into the message.
-2.  **Detection**: The Luotsi Core extracts this value into the internal `MessageFrame::delegated_role` field.
-3.  **Governance**: If the source node is `is_trusted`, the Core switches the *active role* to the delegated role for all policy checks (token limits, server access).
-4.  **Propagation**: The Core re-injects `__luotsi_role__` when sending the message to the target (e.g., the Agent), ensuring the context is preserved across multi-hop execution.
-
-### Hierarchical Quotas
-
-When delegation occurs, Luotsi enforces the strictest combined policy. For example, if an Admin gateway is acting as a Guest, the Guest's lower `max_token_size` and restricted `allowed_servers` will be enforced for that specific interaction.
+Because roles are mapped organically within the Adapter's isolated memory and state is maintained within the Core's routing table:
+*   Downstream nodes are completely blind to the routing mechanism and do not need to support custom metadata fields.
+*   It is physically impossible for a compromised or lateral node to artificially inject or spoof roles to escalate privileges.
+*   East-West lateral movement between unauthorized elements is definitively blocked by the Native Policy Engine.
