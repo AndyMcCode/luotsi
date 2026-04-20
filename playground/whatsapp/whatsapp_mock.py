@@ -55,10 +55,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "method": "whatsapp.message_received",
                 "params": {
                     "from": sender,
-                    "body": body
+                    "body": body,
+                    "_meta": {
+                        "role": assigned_role
+                    }
                 },
-                "id": msg_id_counter,
-                "__luotsi_role__": assigned_role
+                "id": msg_id_counter
             }
             msg_id_counter += 1
             # Register thread event to wait for Luotsi Core response
@@ -72,7 +74,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             sys.stdout.flush()
 
             # Respond to HTTP client synchronously
-            event.wait(timeout=60.0)
+            event.wait(timeout=120.0)
             
             if "reply" in response_data:
                 self.send_response(200)

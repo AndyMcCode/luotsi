@@ -47,11 +47,17 @@ function trackCapabilities(cloudEvent) {
     if (sourceId) nodeLastSeen[sourceId] = Date.now();
     if (targetId) nodeLastSeen[targetId] = Date.now();
 
-    if (cloudEvent.data && cloudEvent.data.payload && cloudEvent.data.payload.id && 
-        typeof cloudEvent.data.payload.id === 'string' && 
-        cloudEvent.data.payload.id.includes('__luotsi__tools__')) {
-       if (cloudEvent.data.payload.result && cloudEvent.data.payload.result.tools) {
-           nodeCapabilities[sourceId] = cloudEvent.data.payload.result.tools;
+    const payload = cloudEvent.data ? cloudEvent.data.payload : null;
+    if (payload && payload.id) {
+       const isDiscovery = typeof payload.id === 'string' && payload.id.includes('__luotsi__tools__');
+       if (isDiscovery) {
+           console.log(`[Discovery] Detected tool response for ${sourceId}. ID: ${payload.id}`);
+           if (payload.result && payload.result.tools) {
+               console.log(`[Discovery] Successfully extracted ${payload.result.tools.length} tools for ${sourceId}`);
+               nodeCapabilities[sourceId] = payload.result.tools;
+           } else {
+               console.log(`[Discovery] Warning: Payload for ${sourceId} missing result.tools`, JSON.stringify(payload).substring(0, 200));
+           }
        }
     }
   } catch (e) {

@@ -102,6 +102,10 @@ void Observability::log_message(const MessageFrame& frame) {
         {"payload", frame.payload}
     };
 
+    if (!frame.trace_id.empty() && !frame.span_id.empty()) {
+        cloudevent["traceparent"] = "00-" + frame.trace_id + "-" + frame.span_id + "-01";
+    }
+
     std::string dump = cloudevent.dump();
     emit_udp(dump);
 

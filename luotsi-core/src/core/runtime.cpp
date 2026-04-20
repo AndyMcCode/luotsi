@@ -314,6 +314,13 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
 
     spdlog::info("Bus received from {}: {}", source_id, frame.payload.dump());
 
+    // Initialize Trace Context if missing (Root request)
+    if (frame.trace_id.empty() && frame.payload.contains("id") && frame.payload.contains("method")) {
+        frame.trace_id = generate_uuid_v4();
+        frame.span_id = generate_uuid_v4().substr(0, 16);
+        spdlog::info("Initialized new trace: trace_id={}, span_id={}", frame.trace_id, frame.span_id);
+    }
+
     // 0. Payload Guard (Hierarchical)
     size_t effective_limit = config_.max_token_size;
     std::string active_role_name = get_active_role_name(frame, source_id);

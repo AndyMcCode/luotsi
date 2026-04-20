@@ -37,6 +37,10 @@
                 <button class="tab" data-channel="mcp">
                     <span class="icon">⚡</span> MCP Protocol
                 </button>
+                <div class="tab-separator">Observability</div>
+                <button class="tab" data-channel="observability">
+                    <span class="icon">👁</span> Trace Sessions
+                </button>
             </nav>
 
             <!-- Network Visualization Pane -->
@@ -71,7 +75,56 @@
                         <span class="message">Waiting for incoming telemetry...</span>
                     </div>
                 </div>
+            <!-- Observability Pane -->
+            <section class="observability-glass" id="observability-section" style="display: none;">
+                <div class="network-header">
+                    <h2>Agentic Trace Timeline</h2>
+                    <p>Correlated execution traces across nodes and agents.</p>
+                </div>
+                <div class="observability-container">
+                    <div class="session-table-container">
+                        <table class="session-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Trace ID</th>
+                                    <th>Start Time</th>
+                                    <th>Master Agent</th>
+                                    <th>Hop Delay</th>
+                                    <th>Events</th>
+                                </tr>
+                            </thead>
+                            <tbody id="session-table-body">
+                                <!-- Sessions injected here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </section>
+        </div>
+    </div>
+
+    <!-- Trace Drawer -->
+    <div class="drawer-overlay" id="drawer-overlay">
+        <div class="trace-drawer">
+            <div class="drawer-main">
+                <div class="drawer-header">
+                    <div>
+                        <h2 id="drawer-trace-id">Trace ID: ...</h2>
+                        <span id="drawer-trace-time" style="color:var(--text-muted); font-size:0.8rem;">Timestamp</span>
+                    </div>
+                    <button class="close-drawer" id="close-drawer">Close</button>
+                </div>
+                <div class="timeline" id="trace-timeline">
+                    <!-- Timeline items injected here -->
+                </div>
+            </div>
+            <div class="detail-pane" id="detail-pane">
+                <h3>Event Specifications</h3>
+                <div id="detail-content">
+                    <div style="color:var(--text-muted); font-size:0.9rem; font-style:italic;">Select a timeline event to view specifications.</div>
+                </div>
+            </div>
         </div>
     </div>
     
