@@ -314,6 +314,14 @@ void Runtime::dispatch(const std::string& target_id, luotsi::MessageFrame& frame
 }
 
 void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& source_id) {
+    // --- PROTOCOL ENFORCEMENT ---
+    // Basic validation: Ensure it's a valid JSON-RPC 2.0 object.
+    // Legacy role/user delegation fields are no longer supported or checked explicitly.
+    if (!frame.payload.is_object() || !frame.payload.contains("jsonrpc")) {
+        spdlog::warn("Protocol violation: node '{}' sent malformed payload. Dropping message.", source_id);
+        return;
+    }
+
     // Lookup current config for this source
     const NodeConfig* source_config = nullptr;
     for(const auto& node : config_.nodes) {
@@ -797,22 +805,40 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
     if (frame.payload.contains("method")) {
         // method already assigned at the top
         
-        // Handle Authentication
+        // Handle Authentication (Strictly for TCP/Remote nodes)
         if (method == "luotsi/authenticate") {
-            std::string agent_key = frame.payload["params"]["secret_key"].get<std::string>();
+            bool is_tcp = (source_config && source_config->runtime.adapter == "jsonrpc_tcp");
+            
+            if (!is_tcp) {
+                spdlog::warn("Access Denied: Node '{}' attempted authentication over non-TCP adapter. Stdio nodes are auto-authenticated.", source_id);
+                if (frame.payload.contains("id")) {
+                    MessageFrame error_reply;
+                    error_reply.source_id = "luotsi-hub";
+                    error_reply.target_id = source_id;
+                    error_reply.payload = { {"jsonrpc", "2.0"}, {"id", frame.payload["id"]}, {"error", {{"code", -32001}, {"message", "Access Denied: luotsi/authenticate is reserved for TCP connections"}}} };
+                    if (ports_.count(source_id)) ports_[source_id]->send(error_reply);
+                }
+                return;
+            }
+
+            std::string agent_key = frame.payload.contains("params") && frame.payload["params"].contains("secret_key") ? 
+                                    frame.payload["params"]["secret_key"].get<std::string>() : "";
+            
             bool authenticated = false;
             std::string assigned_role = "";
             
             auto agent_port = std::dynamic_pointer_cast<ports::AgentPort>(ports_[source_id]);
 
             for (const auto& role : roles_) {
-                if (role.secret_key == agent_key) {
+                if (!role.secret_key.empty() && role.secret_key == agent_key) {
                     assigned_role = role.name;
                     authenticated = true;
-                    if (agent_port) agent_port->setRole(assigned_role);
-                    spdlog::info("Agent '{}' authenticated as role '{}'", source_id, assigned_role);
                     break;
                 }
+            }
+
+            if (authenticated && agent_port) {
+                spdlog::info("TCP Agent '{}' session established as role '{}'", source_id, assigned_role);
             }
             
             MessageFrame auth_reply;
@@ -822,7 +848,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
             if (authenticated) {
                 auth_reply.payload = { {"jsonrpc", "2.0"}, {"id", frame.payload["id"]}, {"result", {{"authenticated", true}, {"role", assigned_role}}} };
             } else {
-                spdlog::warn("Agent '{}' failed authentication with key: {}", source_id, agent_key);
+                spdlog::warn("TCP Agent '{}' failed authentication with key: {}", source_id, agent_key);
                 auth_reply.payload = { {"jsonrpc", "2.0"}, {"id", frame.payload["id"]}, {"error", {{"code", -32000}, {"message", "Authentication Failed"}}} };
             }
 
@@ -1301,13 +1327,21 @@ std::string Runtime::get_active_role_name(const MessageFrame& frame, const std::
     
     // First, check if the node has a static role in config
     for (const auto& node : config_.nodes) {
-        if (node.id == source_id && !node.role.empty()) {
-            base_role = node.role;
+        if (node.id == source_id) {
+            if (!node.role.empty()) {
+                base_role = node.role;
+            } else if (node.runtime.adapter == "stdio") {
+                // Auto-assign roles for managed stdio nodes if none specified
+                if (node.is_agent) base_role = "agent";
+                else if (node.is_mcp_server) base_role = "mcp_server";
+                else base_role = "guest";
+                spdlog::debug("Auto-assigned role '{}' to managed stdio node '{}'", base_role, source_id);
+            }
             break;
         }
     }
     
-    // Fallback to runtime authentication context if no static role
+    // Fallback to runtime authentication context if no static role found
     if (base_role.empty()) {
         auto agent_port = std::dynamic_pointer_cast<ports::AgentPort>(ports_[source_id]);
         if (agent_port && agent_port->isAuthenticated()) {
@@ -1327,12 +1361,8 @@ std::string Runtime::get_active_role_name(const MessageFrame& frame, const std::
         }
     }
 
-    // Role Delegation (e.g. from WhatsApp)
-    if (!frame.delegated_role.empty() && is_source_trusted) {
-        return frame.delegated_role;
-    }
-    
-    // Dynamic payload role injection check removed (Phase 2 completion)
+    // Dynamic payload role injection and delegation removed.
+    // We strictly use the base_role determined by static configuration or port authentication.
 
     return base_role;
 }

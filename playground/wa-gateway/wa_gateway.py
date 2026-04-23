@@ -160,7 +160,6 @@ class _Handler(BaseHTTPRequestHandler):
             "method":  "whatsapp.message_received",
             "params":  {"from": sender, "body": body},
             "id":      msg_id,
-            "__luotsi_role__": "guest",  # Delegate restricted guest role to the agent
         }
 
         event      = threading.Event()
@@ -236,11 +235,6 @@ def _handle_core_message(line: str):
 
     msg_id = msg.get("id")
 
-    # Authentication ack — nothing to do
-    if msg_id == "auth_0":
-        log("🔐  Authenticated with Luotsi Core")
-        return
-
     if msg_id is not None and msg_id in _pending_requests:
         event, reply_data = _pending_requests[msg_id]
         result = msg.get("result", msg)
@@ -276,17 +270,6 @@ def main():
     log("🚀  WhatsApp Gateway Node starting…")
     log(f"    Phone Number ID : {PHONE_NUMBER_ID}")
     log(f"    Business Number : {BUSINESS_NUMBER}")
-
-    # Authenticate with Luotsi Core
-    secret_key = os.environ.get("LUOTSI_SECRET_KEY", "super_secret_admin")
-    auth_msg = {
-        "jsonrpc": "2.0",
-        "method":  "luotsi/authenticate",
-        "params":  {"secret_key": secret_key},
-        "id":      "auth_0",
-    }
-    print(json.dumps(auth_msg, sort_keys=True), flush=True)
-    log(f"🔑  Sent auth request (key={secret_key!r})")
 
     # Start HTTP server in daemon thread
     http_thread = threading.Thread(target=_run_http_server, daemon=True)

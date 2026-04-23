@@ -45,18 +45,17 @@ class MCPLangChainAgent:
     def log(self, msg):
         logger.info(msg)
 
-    def write_rpc(self, method: str, params: dict = None, request_id: int = None, delegated_role: str = None):
+    def write_rpc(self, method: str, params: dict = None, request_id: int = None):
         """Write a JSON-RPC request to stdout to be routed by Luotsi."""
         msg = {"jsonrpc": "2.0", "method": method}
         if params is not None: msg["params"] = params
         if request_id is not None: msg["id"] = request_id
-        if delegated_role: msg["__luotsi_role__"] = delegated_role
         
         json_str = json.dumps(msg, sort_keys=True)
         self.log(f"Sending via Luotsi Bus: {json_str}")
         print(json_str, flush=True)
 
-    def dispatch_mcp_tool_sync(self, name: str, arguments: dict, override_method: str = "tools/call", delegated_role: str = None, timeout: float = 30.0) -> str:
+    def dispatch_mcp_tool_sync(self, name: str, arguments: dict, override_method: str = "tools/call", timeout: float = 30.0) -> str:
         """Invoked by LangChain Executor. Sends tool call to Luotsi and waits for reply."""
         self.msg_id += 1
         req_id = self.msg_id
@@ -67,7 +66,7 @@ class MCPLangChainAgent:
         
         params = {"name": name, "arguments": arguments} if override_method == "tools/call" else arguments
         
-        self.write_rpc(override_method, params, req_id, delegated_role=delegated_role)
+        self.write_rpc(override_method, params, req_id)
         
         self.log(f"Executor blocking on: {override_method} (req_id: {req_id})")
         event.wait(timeout=timeout)
@@ -85,7 +84,7 @@ class MCPLangChainAgent:
         else:
             return "Error: Tool execution timed out or failed."
 
-    def process_user_message(self, user_msg: str, reply_id: int, delegated_role: str = None, session_id: str = None):
+    def process_user_message(self, user_msg: str, reply_id: int, session_id: str = None):
         """The core Plan-and-Execute agent logic."""
         self.log(f"--- Starting Plan-and-Execute Run for: '{user_msg}' ---")
         
@@ -100,7 +99,6 @@ class MCPLangChainAgent:
             recall_result = self.dispatch_mcp_tool_sync(
                 "session_memory__get_recent_history", 
                 recall_args, 
-                delegated_role=delegated_role,
                 timeout=10.0
             )
             
@@ -198,11 +196,11 @@ Decide how to satisfy the Aim:
                 
                 if action.action_type == "tool_call" and action.tool_name:
                     self.log(f"LLM decided to call tool: {action.tool_name} with args {action.tool_arguments}")
-                    result = self.dispatch_mcp_tool_sync(action.tool_name, action.tool_arguments, delegated_role=delegated_role)
+                    result = self.dispatch_mcp_tool_sync(action.tool_name, action.tool_arguments)
                     scratchpad.append({f"Step {i+1} Tool Result ({action.tool_name})": result})
                 elif action.action_type == "resource_read" and action.resource_uri:
                     self.log(f"LLM decided to read resource: {action.resource_uri}")
-                    result = self.dispatch_mcp_tool_sync("resources/read", {"uri": action.resource_uri}, override_method="resources/read", delegated_role=delegated_role)
+                    result = self.dispatch_mcp_tool_sync("resources/read", {"uri": action.resource_uri}, override_method="resources/read")
                     scratchpad.append({f"Step {i+1} Resource ({action.resource_uri})": result})
                 else:
                     self.log(f"LLM provided direct answer: {action.reasoning_or_answer}")
@@ -296,10 +294,8 @@ If the tool output claims success but the scratchpad shows a failure, ignore the
                 user_msg = data.get("params", {}).get("body", "")
                 session_id = data.get("params", {}).get("from", "")
                 reply_id = data.get("id")
-                delegated_role = data.get("__luotsi_role__")
-                
                 # Fire the sequence in a NEW thread so we don't block the stdin reader!!!
-                exec_thread = threading.Thread(target=self.process_user_message, args=(user_msg, reply_id, delegated_role, session_id), daemon=True)
+                exec_thread = threading.Thread(target=self.process_user_message, args=(user_msg, reply_id, session_id), daemon=True)
                 exec_thread.start()
 
     async def run(self):
@@ -310,19 +306,6 @@ If the tool output claims success but the scratchpad shows a failure, ignore the
         reader_thread = threading.Thread(target=self.read_loop, daemon=True)
         reader_thread.start()
         
-        # 0.5) Authenticate with Luotsi Core Policy Engine
-        secret_key = os.environ.get("LUOTSI_SECRET_KEY", "super_secret_admin")
-        self.log(f"Authenticating with Luotsi Hub using key: {secret_key}")
-        auth_result = self.dispatch_mcp_tool_sync("luotsi/authenticate", {
-            "secret_key": secret_key
-        }, override_method="luotsi/authenticate")
-        
-        if isinstance(auth_result, dict) and "authenticated" in auth_result:
-             self.log(f"Authentication Successful! Assigned Policy Role: {auth_result.get('role')}")
-        else:
-             self.log(f"Authentication Failed or Unrecognized Response: {auth_result}")
-             sys.exit(1)
-            
         self.log("Dispatching MCP Initialization request...")
         
         # 1. Initialize

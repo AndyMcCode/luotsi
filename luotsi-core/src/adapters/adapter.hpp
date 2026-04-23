@@ -12,7 +12,6 @@ namespace luotsi {
 struct MessageFrame {
     std::string source_id;
     std::string target_id;
-    std::string delegated_role;
     nlohmann::json payload;
     std::string trace_id;
     std::string span_id;

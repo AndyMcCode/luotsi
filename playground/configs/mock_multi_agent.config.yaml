@@ -43,7 +43,7 @@ nodes:
   - id: "langchain_agent"
     master: true  # <--- CATCH-ALL ROUTING
     is_agent: true
-    role: "admin"
+    role: "guest"
     runtime:
       adapter: "stdio"
       command: "docker"
