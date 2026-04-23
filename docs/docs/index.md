@@ -20,7 +20,7 @@ Building agents is easy; integrating them safely is hard. You usually end up wri
 *   **Master Node Fail-safe**: Designate a central node to handle all unmatched traffic, ensuring no message is lost.
 *   **Multi-Agent Orchestration**: Native support for agent-to-agent delegation and shared across-node memory.
 *   **Governance Guardrails**: Dual-layer security with "Soft" (Discovery-level) and "Hard" (Bus-level) enforcement (see [Governance Guide](file:///home/andy/code/luotsi/docs/docs/internal/governance.md)).
-*   **Distributed Tracing (OpenTelemetry)**: Every `tools/call` cycle generates a W3C-compliant span with `gen_ai.*` semantic attributes, emitted as a CloudEvent over UDP. Traces propagate end-to-end across agents, Luotsi, and MCP servers using the standard `traceparent` header. See [Observability & OpenTelemetry](observability.md).
+*   **Distributed Tracing (OpenTelemetry)**: Every `tools/call` cycle generates a W3C-compliant span with `gen_ai.*` semantic attributes, emitted as a CloudEvent over UDP. Traces propagate end-to-end across agents, Luotsi, and MCP servers using the standard `traceparent` header. See [Observability](observability.md) and [Tracing Architecture](tracing.md).
 *   **Visual Observability Dashboard**: A real-time, glassmorphic Node.js and WebSockets based UI that natively intercepts CloudEvents telemetry UDP payloads to render live functional topology mappings and stream logs.
 
 It is a simplified integration layer that keeps your agents useful, harmless, and accountable.

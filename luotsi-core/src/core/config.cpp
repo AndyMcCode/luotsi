@@ -60,6 +60,9 @@ std::expected<Config, std::string> Config::load_from_file(const std::string& pat
                 if (node_yaml["is_agent"]) {
                     node_config.is_agent = node_yaml["is_agent"].as<bool>();
                 }
+                if (node_yaml["is_gateway"]) {
+                    node_config.is_gateway = node_yaml["is_gateway"].as<bool>();
+                }
                 if (node_yaml["role"]) {
                     node_config.role = node_yaml["role"].as<std::string>();
                 } else if (node_config.is_mcp_server) {

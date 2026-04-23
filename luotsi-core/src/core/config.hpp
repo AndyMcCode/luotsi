@@ -29,6 +29,7 @@ struct NodeConfig {
     std::string id;
     bool is_mcp_server = false;
     bool is_agent = false;
+    bool is_gateway = false;
     std::string role;
     bool master = false;
     bool session_memory = false;

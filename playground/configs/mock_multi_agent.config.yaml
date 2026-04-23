@@ -15,6 +15,7 @@ nodes:
       args: ["run", "-i", "--rm", "-v", "luotsi-session-data:/app/data", "luotsi-session-memory"]
 
   - id: "whatsapp_mock"
+    is_gateway: true
     role: "gateway"
     runtime:
       adapter: "stdio"

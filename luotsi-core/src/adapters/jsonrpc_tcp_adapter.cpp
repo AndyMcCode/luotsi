@@ -131,15 +131,9 @@ void JsonRpcTcpAdapter::do_read() {
                                 if (!traceparent.empty() && traceparent.size() >= 55) {
                                     frame.trace_id = traceparent.substr(3, 32);
                                     frame.parent_span_id = traceparent.substr(36, 16);
-                                } else {
-                                    std::string uuid = luotsi::internal::generate_uuid_v4();
-                                    uuid.erase(std::remove(uuid.begin(), uuid.end(), '-'), uuid.end());
-                                    frame.trace_id = uuid;
                                 }
                                 
-                                std::string span_id = luotsi::internal::generate_uuid_v4();
-                                span_id.erase(std::remove(span_id.begin(), span_id.end(), '-'), span_id.end());
-                                frame.span_id = span_id.substr(0, 16);
+                                frame.span_id = luotsi::internal::generate_span_id();
                                 frame.timestamp = std::chrono::steady_clock::now();
 
                                 if (on_receive_) on_receive_(frame);
@@ -165,15 +159,9 @@ void JsonRpcTcpAdapter::do_read() {
                         if (!traceparent.empty() && traceparent.size() >= 55) {
                             frame.trace_id = traceparent.substr(3, 32);
                             frame.parent_span_id = traceparent.substr(36, 16);
-                        } else {
-                            std::string uuid = luotsi::internal::generate_uuid_v4();
-                            uuid.erase(std::remove(uuid.begin(), uuid.end(), '-'), uuid.end());
-                            frame.trace_id = uuid;
                         }
                         
-                        std::string span_id = luotsi::internal::generate_uuid_v4();
-                        span_id.erase(std::remove(span_id.begin(), span_id.end(), '-'), span_id.end());
-                        frame.span_id = span_id.substr(0, 16);
+                        frame.span_id = luotsi::internal::generate_span_id();
                         frame.timestamp = std::chrono::steady_clock::now();
 
                         if (on_receive_) on_receive_(frame);

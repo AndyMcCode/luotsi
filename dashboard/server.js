@@ -49,14 +49,31 @@ function trackCapabilities(cloudEvent) {
 
     const payload = cloudEvent.data ? cloudEvent.data.payload : null;
     if (payload && payload.id) {
-       const isDiscovery = typeof payload.id === 'string' && payload.id.includes('__luotsi__tools__');
-       if (isDiscovery) {
-           console.log(`[Discovery] Detected tool response for ${sourceId}. ID: ${payload.id}`);
+       const idStr = String(payload.id);
+       
+       if (!nodeCapabilities[sourceId]) {
+           nodeCapabilities[sourceId] = { tools: [], resources: [], templates: [], prompts: [] };
+       }
+
+       if (idStr.includes('__luotsi__tools__')) {
            if (payload.result && payload.result.tools) {
-               console.log(`[Discovery] Successfully extracted ${payload.result.tools.length} tools for ${sourceId}`);
-               nodeCapabilities[sourceId] = payload.result.tools;
-           } else {
-               console.log(`[Discovery] Warning: Payload for ${sourceId} missing result.tools`, JSON.stringify(payload).substring(0, 200));
+               nodeCapabilities[sourceId].tools = payload.result.tools;
+               console.log(`[Discovery] Registered ${payload.result.tools.length} tools for ${sourceId}`);
+           }
+       } else if (idStr.includes('__luotsi__resources__')) {
+           if (payload.result && payload.result.resources) {
+               nodeCapabilities[sourceId].resources = payload.result.resources;
+               console.log(`[Discovery] Registered ${payload.result.resources.length} resources for ${sourceId}`);
+           }
+       } else if (idStr.includes('__luotsi__templates__')) {
+           if (payload.result && payload.result.resourceTemplates) {
+               nodeCapabilities[sourceId].templates = payload.result.resourceTemplates;
+               console.log(`[Discovery] Registered ${payload.result.resourceTemplates.length} templates for ${sourceId}`);
+           }
+       } else if (idStr.includes('__luotsi__prompts__')) {
+           if (payload.result && payload.result.prompts) {
+               nodeCapabilities[sourceId].prompts = payload.result.prompts;
+               console.log(`[Discovery] Registered ${payload.result.prompts.length} prompts for ${sourceId}`);
            }
        }
     }

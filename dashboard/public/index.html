@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Luotsi Observability Engine</title>
+    <meta name="description" content="Real-time observability dashboard for the Luotsi agentic switch fabric. Monitor node topology, trace sessions, and live event streams.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -16,6 +17,23 @@
                 <div class="orb"></div>
                 <h1>Luotsi <span class="gradient-text">Engine</span></h1>
             </div>
+            <div class="topbar-stats">
+                <div class="stat-pill" id="stat-nodes">
+                    <span class="stat-icon">⎈</span>
+                    <span id="stat-nodes-count">0</span>
+                    <span class="stat-label">nodes</span>
+                </div>
+                <div class="stat-pill" id="stat-edges">
+                    <span class="stat-icon">⇌</span>
+                    <span id="stat-edges-count">0</span>
+                    <span class="stat-label">edges</span>
+                </div>
+                <div class="stat-pill" id="stat-traces">
+                    <span class="stat-icon">👁</span>
+                    <span id="stat-traces-count">0</span>
+                    <span class="stat-label">traces</span>
+                </div>
+            </div>
             <div class="connection-status">
                 <div class="pulse-dot" id="ws-dot"></div>
                 <span id="ws-status">Connecting...</span>
@@ -24,33 +42,86 @@
 
         <div class="main-content">
             <nav class="channel-tabs">
-                <button class="tab active" data-channel="network">
+                <button class="tab active" id="tab-network" data-channel="network">
                     <span class="icon">⎈</span> Node Network
                 </button>
                 <div class="tab-separator">Events Stream</div>
-                <button class="tab" data-channel="all">
+                <button class="tab" id="tab-all" data-channel="all">
                     <span class="icon">∞</span> All Events
                 </button>
-                <button class="tab" data-channel="jsonrpc">
+                <button class="tab" id="tab-jsonrpc" data-channel="jsonrpc">
                     <span class="icon">⇌</span> JSON-RPC Core
                 </button>
-                <button class="tab" data-channel="mcp">
+                <button class="tab" id="tab-mcp" data-channel="mcp">
                     <span class="icon">⚡</span> MCP Protocol
                 </button>
                 <div class="tab-separator">Observability</div>
-                <button class="tab" data-channel="observability">
+                <button class="tab" id="tab-observability" data-channel="observability">
                     <span class="icon">👁</span> Trace Sessions
                 </button>
             </nav>
 
-            <!-- Network Visualization Pane -->
+            <!-- Network Graph Pane -->
             <section class="network-glass" id="network-section">
                 <div class="network-header">
-                    <h2>Live Intelligence Topology</h2>
-                    <p>Real-time node capabilities and heartbeat tracking.</p>
+                    <div>
+                        <h2>Live Intelligence Topology</h2>
+                        <p>Real-time node graph — click a node to inspect capabilities</p>
+                    </div>
+                    <div class="graph-legend">
+                        <div class="legend-item"><span class="legend-dot active"></span>Active</div>
+                        <div class="legend-item"><span class="legend-dot idle"></span>Idle</div>
+                        <div class="legend-item"><span class="legend-edge"></span>Traffic</div>
+                    </div>
                 </div>
-                <div class="network-grid" id="node-grid">
-                    <!-- Node Cards dynamically injected here -->
+                <div class="graph-container">
+                    <svg id="node-graph" aria-label="Luotsi node network topology graph">
+                        <defs>
+                            <filter id="glow-purple">
+                                <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                            <filter id="glow-green">
+                                <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                            <filter id="glow-amber">
+                                <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                            <radialGradient id="node-grad-active" cx="50%" cy="35%" r="65%">
+                                <stop offset="0%" stop-color="#a78bfa"/>
+                                <stop offset="100%" stop-color="#5b21b6"/>
+                            </radialGradient>
+                            <radialGradient id="node-grad-idle" cx="50%" cy="35%" r="65%">
+                                <stop offset="0%" stop-color="#334155"/>
+                                <stop offset="100%" stop-color="#0f172a"/>
+                            </radialGradient>
+                            <radialGradient id="hub-grad" cx="50%" cy="30%" r="70%">
+                                <stop offset="0%" stop-color="#fde68a"/>
+                                <stop offset="55%" stop-color="#d97706"/>
+                                <stop offset="100%" stop-color="#78350f"/>
+                            </radialGradient>
+                        </defs>
+                        <g id="viewport">
+                            <g id="graph-edges"></g>
+                            <g id="graph-nodes"></g>
+                        </g>
+                    </svg>
+                    <!-- empty state -->
+                    <div id="graph-empty-state" class="graph-empty-state">
+                        <div class="empty-orb"></div>
+                        <p>Waiting for nodes to connect...</p>
+                    </div>
                 </div>
             </section>
 
@@ -75,6 +146,8 @@
                         <span class="message">Waiting for incoming telemetry...</span>
                     </div>
                 </div>
+            </section>
+            
             <!-- Observability Pane -->
             <section class="observability-glass" id="observability-section" style="display: none;">
                 <div class="network-header">
@@ -88,9 +161,11 @@
                                 <tr>
                                     <th>Status</th>
                                     <th>Trace ID</th>
+                                    <th>Type</th>
                                     <th>Start Time</th>
-                                    <th>Master Agent</th>
-                                    <th>Hop Delay</th>
+                                    <th>Primary Node</th>
+                                    <th>Cycle</th>
+                                    <th>Total Latency</th>
                                     <th>Events</th>
                                 </tr>
                             </thead>
@@ -101,6 +176,28 @@
                     </div>
                 </div>
             </section>
+        </div>
+    </div>
+
+    <!-- Node Capability Panel (slides in from right) -->
+    <div class="node-panel-overlay" id="node-panel-overlay">
+        <div class="node-detail-panel" id="node-detail-panel">
+            <div class="node-panel-header">
+                <div>
+                    <div class="node-panel-id" id="panel-node-id">node-id</div>
+                    <div class="node-panel-meta" id="panel-node-meta">luotsi.node</div>
+                </div>
+                <div class="node-panel-actions">
+                    <div class="node-panel-status" id="panel-node-status">
+                        <div class="node-dot"></div>
+                        <span class="status-text">IDLE</span>
+                    </div>
+                    <button class="close-panel" id="close-node-panel" aria-label="Close panel">✕</button>
+                </div>
+            </div>
+            <div class="node-panel-body" id="node-panel-body">
+                <div class="cap-loading">Loading capabilities...</div>
+            </div>
         </div>
     </div>
 

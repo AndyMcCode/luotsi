@@ -274,16 +274,21 @@ If the tool output claims success but the scratchpad shows a failure, ignore the
                     event.set()
                     continue
 
-                if "protocolVersion" in data["result"]:
+                if "result" not in data:
+                    self.log(f"⚠️  Received response with no result (likely error) for untracked ID: {data}")
+                    continue
+
+                res = data["result"]
+                if "protocolVersion" in res:
                     pass
-                elif "tools" in data["result"]:
-                    self.tools_manifest = data["result"]["tools"]
+                elif "tools" in res:
+                    self.tools_manifest = res["tools"]
                     self.log(f"Successfully discovered {len(self.tools_manifest)} tools.")
-                elif "resources" in data["result"]:
-                    self.resources_manifest = data["result"]["resources"]
+                elif "resources" in res:
+                    self.resources_manifest = res["resources"]
                     self.log(f"Successfully discovered {len(self.resources_manifest)} resources.")
-                elif "resourceTemplates" in data["result"]:
-                    self.templates_manifest = data["result"]["resourceTemplates"]
+                elif "resourceTemplates" in res:
+                    self.templates_manifest = res["resourceTemplates"]
                     self.log(f"Successfully discovered {len(self.templates_manifest)} resource templates.")
             
             # Handle Incoming Users

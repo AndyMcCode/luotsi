@@ -274,6 +274,8 @@ void Runtime::check_deferred_nodes(const Config& current_config) {
     }
 }
 
+// GC functions removed.
+
 void Runtime::dispatch(const std::string& target_id, luotsi::MessageFrame& frame) {
     auto target_port_it = ports_.find(target_id);
     if (target_port_it != ports_.end()) {
@@ -288,10 +290,24 @@ void Runtime::dispatch(const std::string& target_id, luotsi::MessageFrame& frame
             }
         }
 
+        // Emit observability event here: both source_id and target_id are now known.
         if (observability_) {
             observability_->log_message(frame);
         }
+
         target_port_it->second->send(frame);
+
+        // Smart Fabric: Update NAT entry with the resolved target_id for future causal inference.
+        // For outbound requests, frame.payload["id"] already contains the global_id.
+        if (frame.payload.contains("id") && frame.payload.contains("method")) {
+            std::string gid = frame.payload["id"].is_string() ? 
+                              frame.payload["id"].get<std::string>() : 
+                              frame.payload["id"].dump();
+            auto it = nat_table_.find(gid);
+            if (it != nat_table_.end()) {
+                it->second.target_id = target_id;
+            }
+        }
     } else {
         spdlog::warn("Dispatch failed: target '{}' not found for message from '{}'", target_id, frame.source_id);
     }
@@ -314,12 +330,45 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
 
     spdlog::info("Bus received from {}: {}", source_id, frame.payload.dump());
 
-    // Initialize Trace Context if missing (Root request)
+    // 1. Session Context Propagation (Smart Fabric Inference)
     if (frame.trace_id.empty() && frame.payload.contains("id") && frame.payload.contains("method")) {
-        frame.trace_id = generate_uuid_v4();
-        frame.span_id = generate_uuid_v4().substr(0, 16);
-        spdlog::info("Initialized new trace: trace_id={}, span_id={}", frame.trace_id, frame.span_id);
+        NatEntry* parent = find_most_likely_parent(source_id);
+        if (parent) {
+            // Sub-request from node: transparently inherit the root session trace.
+            frame.trace_id       = parent->trace_id;
+            frame.parent_span_id = parent->span_id;
+            frame.span_id        = generate_span_id();
+            spdlog::info("Smart Fabric: Inferred parent trace {} for sub-request from {} (parent_span={})",
+                         frame.trace_id, source_id, frame.parent_span_id);
+        } else {
+            // Root request (external caller) → try to inherit from persistent session cache
+            std::string user_id;
+            if (frame.payload.contains("params")) {
+                if (frame.payload["params"].contains("from") && frame.payload["params"]["from"].is_string()) {
+                    user_id = frame.payload["params"]["from"].get<std::string>();
+                } else if (frame.payload["params"].contains("session_id") && frame.payload["params"]["session_id"].is_string()) {
+                    user_id = frame.payload["params"]["session_id"].get<std::string>();
+                }
+            }
+
+            auto s_it = session_trace_cache_.find(source_id + "::" + user_id);
+            if (!user_id.empty() && s_it != session_trace_cache_.end()) {
+                frame.trace_id       = s_it->second.trace_id;
+                // For a new user message, the previous final response span is the parent
+                frame.parent_span_id = s_it->second.span_id;
+                frame.span_id        = generate_span_id();
+                s_it->second.last_seen = std::chrono::steady_clock::now();
+                spdlog::info("Continued user session trace {} for {} (+{})", 
+                             frame.trace_id, source_id, user_id);
+            } else {
+                frame.trace_id = generate_trace_id();
+                frame.span_id  = generate_span_id();
+                spdlog::info("New root trace {} from {} span={}", frame.trace_id, source_id, frame.span_id);
+            }
+        }
     }
+
+    // NOTE: observability log_message is called inside dispatch() once target_id is resolved.
 
     // 0. Payload Guard (Hierarchical)
     size_t effective_limit = config_.max_token_size;
@@ -391,13 +440,25 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
         if (global_id_str.find("__luotsi__") == 0) {
             spdlog::info("Intercepted internal discovery response from {}: {}", source_id, global_id_str);
             
+            // Emit CloudEvent for this discovery response. These messages never reach dispatch(),
+            // so we must log here to ensure the observability UDP stream captures capability data.
+            if (observability_) {
+                observability_->log_message(frame);
+            }
+
             auto mcp_port = std::dynamic_pointer_cast<ports::McpPort>(ports_[source_id]);
             if (!mcp_port) return;
 
             if (global_id_str == "__luotsi__init__" + source_id) {
+                // Initialize a trace for the discovery process
+                std::string discovery_trace = generate_trace_id();
+                std::string discovery_span = generate_span_id();
+
                 MessageFrame notif;
                 notif.source_id = "luotsi-hub";
                 notif.target_id = source_id;
+                notif.trace_id = discovery_trace;
+                notif.span_id = discovery_span;
                 notif.payload = { {"jsonrpc", "2.0"}, {"method", "notifications/initialized"} };
                 dispatch(source_id, notif);
                 
@@ -414,6 +475,8 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     MessageFrame req;
                     req.source_id = "luotsi-hub";
                     req.target_id = source_id;
+                    req.trace_id = discovery_trace;
+                    req.span_id = generate_span_id();
                     req.payload = { {"jsonrpc", "2.0"}, {"id", "__luotsi__tools__" + source_id}, {"method", "tools/list"} };
                     dispatch(source_id, req);
                 }
@@ -422,6 +485,8 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     MessageFrame req2;
                     req2.source_id = "luotsi-hub";
                     req2.target_id = source_id;
+                    req2.trace_id = discovery_trace;
+                    req2.span_id = generate_span_id();
                     req2.payload = { {"jsonrpc", "2.0"}, {"id", "__luotsi__resources__" + source_id}, {"method", "resources/list"} };
                     dispatch(source_id, req2);
                 }
@@ -430,6 +495,8 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                     MessageFrame req3;
                     req3.source_id = "luotsi-hub";
                     req3.target_id = source_id;
+                    req3.trace_id = discovery_trace;
+                    req3.span_id = generate_span_id();
                     req3.payload = { {"jsonrpc", "2.0"}, {"id", "__luotsi__templates__" + source_id}, {"method", "resources/templates/list"} };
                     dispatch(source_id, req3);
                 }
@@ -485,21 +552,17 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
             }
         }
 
-        // Check for normal request/response tracking
-        auto it = pending_requests_.find(global_id_str);
-        if (it != pending_requests_.end()) {
+        // Check for normal request/response tracking via NAT table
+        auto it = nat_table_.find(global_id_str);
+        if (it != nat_table_.end() && !it->second.fulfilled) {
             std::string target = it->second.source_id;
             // Validate target still exists
             auto target_port_it = ports_.find(target);
             if (target_port_it != ports_.end()) {
                 spdlog::info("Auto-routing Response {} -> {}", source_id, target);
                 
-                // Un-NAT the ID (Restore original ID)
-                auto orig_it = original_ids_.find(global_id_str);
-                if (orig_it != original_ids_.end()) {
-                    frame.payload["id"] = orig_it->second;
-                    original_ids_.erase(orig_it);
-                }
+                // Un-NAT the ID (Restore original ID from NAT entry)
+                frame.payload["id"] = it->second.original_id;
 
                 // Fork to session memory if configured
                 // Only for user-facing interactions: skip if either side is an MCP server or session memory node
@@ -511,41 +574,89 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                         if (node.id == target)    target_is_mcp = node.is_mcp_server || node.session_memory;
                     }
                     if (!source_is_mcp && !target_is_mcp) {
-                        auto req_it = request_payloads_.find(global_id_str);
-                        if (req_it != request_payloads_.end()) {
-                            MessageFrame memory_frame;
-                            memory_frame.source_id = "luotsi-hub";
-                            memory_frame.target_id = session_memory_node_id_;
-                            memory_frame.payload = {
-                                {"jsonrpc", "2.0"},
-                                {"method", "luotsi/interaction"},
-                                {"params", {
-                                    {"source", target},
-                                    {"target", source_id},
-                                    {"prompt", req_it->second},
-                                    {"completion", frame.payload}
-                                }}
-                            };
-                            if (ports_.count(session_memory_node_id_)) {
-                                spdlog::info("Forking interaction to session memory: {} -> {}", target, source_id);
-                                dispatch(session_memory_node_id_, memory_frame);
-                            } else {
-                                spdlog::warn("Session memory node '{}' not found in ports", session_memory_node_id_);
-                            }
-                            request_payloads_.erase(req_it);
+                        MessageFrame memory_frame;
+                        memory_frame.source_id = "luotsi-hub";
+                        memory_frame.target_id = session_memory_node_id_;
+                        memory_frame.payload = {
+                            {"jsonrpc", "2.0"},
+                            {"method", "luotsi/interaction"},
+                            {"params", {
+                                {"source", target},
+                                {"target", source_id},
+                                {"prompt", it->second.request_payload},
+                                {"completion", frame.payload}
+                            }}
+                        };
+                        memory_frame.trace_id       = it->second.trace_id;
+                        memory_frame.parent_span_id = it->second.span_id;
+                        memory_frame.span_id        = generate_span_id();
+                        if (ports_.count(session_memory_node_id_)) {
+                            spdlog::info("Forking interaction to session memory: {} -> {}", target, source_id);
+                            dispatch(session_memory_node_id_, memory_frame);
+                        } else {
+                            spdlog::warn("Session memory node '{}' not found in ports", session_memory_node_id_);
                         }
                     }
                 }
                 
+                // Restore trace context from the original request so the response span
+                // carries the same trace_id — completing the round-trip in one trace.
+                // Response frames from MCP servers carry no traceparent themselves.
+                if (frame.trace_id.empty()) {
+                    frame.trace_id       = it->second.trace_id;
+                    frame.parent_span_id = it->second.span_id;
+                    frame.span_id        = generate_span_id();
+                }
+
+                // Build PendingRequestState for span emission from the NAT entry
+                PendingRequestState req_state {
+                    it->second.source_id,
+                    it->second.trace_id,
+                    it->second.span_id,
+                    it->second.parent_span_id,
+                    it->second.start_time
+                };
+
                 dispatch(target, frame);
                 
+                // Update session persistence cache for this user
+                {
+                    std::string user_id;
+                    if (it->second.request_payload.contains("params")) {
+                        if (it->second.request_payload["params"].contains("from") && it->second.request_payload["params"]["from"].is_string()) {
+                            user_id = it->second.request_payload["params"]["from"].get<std::string>();
+                        } else if (it->second.request_payload["params"].contains("session_id") && it->second.request_payload["params"]["session_id"].is_string()) {
+                            user_id = it->second.request_payload["params"]["session_id"].get<std::string>();
+                        }
+                    }
+                    if (!user_id.empty()) {
+                        std::string session_key = target + "::" + user_id;
+                        session_trace_cache_[session_key] = { frame.trace_id, frame.span_id, std::chrono::steady_clock::now() };
+                    }
+                }
+                
+                bool is_trace_end = false;
                 if (observability_) {
                     auto duration = std::chrono::steady_clock::now() - it->second.start_time;
                     auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-                    observability_->log_span(it->second, frame, duration_ms);
+                    
+                    for (const auto& node : config_.nodes) {
+                        if (node.id == target) {
+                            if (node.is_gateway) is_trace_end = true;
+                            break;
+                        }
+                    }
+                    observability_->log_span(req_state, frame, duration_ms, is_trace_end);
                 }
 
-                pending_requests_.erase(it);
+                if (is_trace_end) {
+                    session_trace_cache_.clear();
+                }
+
+                // Immediately erase the fulfilled NAT entry
+                auto idx = std::find(nat_insertion_order_.begin(), nat_insertion_order_.end(), global_id_str);
+                if (idx != nat_insertion_order_.end()) nat_insertion_order_.erase(idx);
+                nat_table_.erase(it);
                 return;
             }
         }
@@ -567,13 +678,13 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 if (agg.pending_targets.empty()) {
                     spdlog::info("All fan-out targets complete for {}, aggregating...", global_id_str);
                     
-                    auto source_port_it = ports_.find(agg.source_id);
-                    if (source_port_it != ports_.end()) {
+                    if (ports_.count(agg.source_id)) {
                         nlohmann::json final_response;
                         final_response["jsonrpc"] = "2.0";
                         final_response["id"] = agg.original_id;
                         
                         // MCP Aggregation Logic
+                        bool has_error = false;
                         if (agg.method == "tools/list") {
                             nlohmann::json merged_tools = nlohmann::json::array();
                             for (const auto& resp : agg.responses) {
@@ -585,6 +696,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                                         merged_tools.push_back(tool);
                                     }
                                 }
+                                if (resp.contains("error")) has_error = true;
                             }
                             final_response["result"] = { {"tools", merged_tools} };
                         } else if (agg.method == "resources/list") {
@@ -595,6 +707,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                                         merged_resources.push_back(res);
                                     }
                                 }
+                                if (resp.contains("error")) has_error = true;
                             }
                             final_response["result"] = { {"resources", merged_resources} };
                         } else if (agg.method == "initialize") {
@@ -603,6 +716,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                                     final_response["result"] = resp["result"];
                                     break; 
                                 }
+                                if (resp.contains("error")) has_error = true;
                             }
                         } else {
                             for (const auto& resp : agg.responses) {
@@ -610,16 +724,20 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                                     final_response["result"] = resp["result"];
                                     break;
                                 }
+                                if (resp.contains("error")) has_error = true;
                             }
                         }
 
+                        // Build the consolidated reply frame — carry trace context through
                         MessageFrame final_frame;
-                        final_frame.source_id = "luotsi-hub";
-                        final_frame.target_id = agg.source_id;
-                        final_frame.payload = final_response;
+                        final_frame.source_id    = "luotsi-hub";
+                        final_frame.target_id    = agg.source_id;
+                        final_frame.payload      = final_response;
+                        final_frame.trace_id     = agg.trace_id;
+                        final_frame.parent_span_id = agg.span_id;
+                        final_frame.span_id      = generate_span_id();
 
                         // Fork to session memory if configured
-                        // Only for user-facing interactions: skip if the requester is an MCP server or session memory node
                         if (!session_memory_node_id_.empty() && agg.source_id != session_memory_node_id_) {
                             bool source_is_mcp = false;
                             for (const auto& node : config_.nodes) {
@@ -642,16 +760,30 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                                         {"completion", final_response}
                                     }}
                                 };
+                                memory_frame.trace_id       = agg.trace_id;
+                                memory_frame.parent_span_id = agg.span_id;
+                                memory_frame.span_id        = generate_uuid_v4().substr(0, 16);
                                 if (ports_.count(session_memory_node_id_)) {
                                     spdlog::info("Forking aggregated interaction to session memory: {} -> luotsi-aggregator", agg.source_id);
-                                    ports_[session_memory_node_id_]->send(memory_frame);
+                                    dispatch(session_memory_node_id_, memory_frame);
                                 } else {
                                     spdlog::warn("Session memory node '{}' not found in ports", session_memory_node_id_);
                                 }
                             }
                         }
-                        
-                        source_port_it->second->send(final_frame);
+
+                        // Use dispatch() so traceparent is injected and log_message fires —
+                        // making the aggregated reply visible in the observability stream.
+                        dispatch(agg.source_id, final_frame);
+
+                        // Emit a fan-out span so the dashboard can show total aggregation latency.
+                        if (observability_) {
+                            auto duration = std::chrono::steady_clock::now() - agg.start_time;
+                            auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+                            observability_->log_aggregation_span(
+                                agg.trace_id, agg.span_id, agg.source_id,
+                                agg.method, agg.responses.size(), duration_ms, has_error);
+                        }
                     }
                     
                     pending_aggregations_.erase(agg_it);
@@ -807,11 +939,20 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
              nlohmann::json orig_id_val = frame.payload["id"];
              std::string global_id_val = orig_id_val.is_string() ? orig_id_val.get<std::string>() : orig_id_val.dump();
              std::string global_id = source_id + ":" + global_id_val;
-             
-             pending_requests_[global_id] = {source_id, frame.trace_id, frame.span_id, frame.parent_span_id, frame.timestamp};
-             original_ids_[global_id] = orig_id_val;
-             request_payloads_[global_id] = frame.payload;
-             
+
+             // Consolidated NAT insert — replaces the old 3-map approach.
+             nat_table_[global_id] = {
+                 source_id,
+                 "",                // target_id will be populated during dispatch
+                 orig_id_val,
+                 frame.payload,          // request_payload for session memory
+                 frame.trace_id,
+                 frame.span_id,
+                 frame.parent_span_id,
+                 frame.timestamp,
+                 /*fulfilled=*/false
+             };
+             nat_insertion_order_.push_back(global_id);
              frame.payload["id"] = global_id;
         }
     }
@@ -839,11 +980,29 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 std::string base_global_id = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
                 spdlog::info("Fanning out request {} from {}", method, source_id);
 
+                // Retrieve trace context and original_id from the consolidated NAT table
+                std::string fan_trace_id, fan_span_id, fan_parent_span_id;
+                nlohmann::json fan_original_id = base_global_id;
+                nlohmann::json fan_original_request = frame.payload;
+                auto nat_it = nat_table_.find(base_global_id);
+                if (nat_it != nat_table_.end()) {
+                    fan_trace_id         = nat_it->second.trace_id;
+                    fan_span_id          = nat_it->second.span_id;
+                    fan_parent_span_id   = nat_it->second.parent_span_id;
+                    fan_original_id      = nat_it->second.original_id;
+                    fan_original_request = nat_it->second.request_payload;
+                    // Mark fulfilled so GC can reclaim it — aggregation table owns routing now
+                    nat_it->second.fulfilled = true;
+                }
+
                 PendingAggregation agg;
-                agg.source_id = source_id;
-                agg.original_id = original_ids_[base_global_id]; 
-                agg.method = method;
-                agg.original_request = frame.payload;
+                agg.source_id       = source_id;
+                agg.original_id     = fan_original_id;
+                agg.method          = method;
+                agg.original_request = fan_original_request;
+                agg.trace_id        = fan_trace_id;
+                agg.span_id         = fan_span_id;
+                agg.start_time      = frame.timestamp;
 
                 std::vector<std::string> active_targets = route.targets;
                 
@@ -878,14 +1037,19 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
 
                 if (!agg.pending_targets.empty()) {
                     pending_aggregations_[base_global_id] = agg;
-                    pending_requests_.erase(base_global_id);
-                    original_ids_.erase(base_global_id);
 
+                    // Dispatch each fan-out leg via dispatch() so traceparent is injected
+                    // and every outbound hop appears in the observability stream.
                     for (const auto& target : agg.pending_targets) {
                         MessageFrame target_frame = frame;
+                        target_frame.source_id = "luotsi-hub";
                         target_frame.target_id = target;
-                        target_frame.payload["id"] = base_global_id; 
-                        ports_[target]->send(target_frame);
+                        target_frame.payload["id"] = base_global_id;
+                        // Each leg is a child span of the fan-out trace
+                        target_frame.trace_id       = fan_trace_id;
+                        target_frame.parent_span_id = fan_span_id;
+                        target_frame.span_id        = generate_uuid_v4().substr(0, 16);
+                        dispatch(target, target_frame);
                     }
                 } else {
                      spdlog::warn("Fan-out failed: No valid ports for {}", method);
@@ -903,10 +1067,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                         if (target_port_it != ports_.end()) {
                             spdlog::info("Resource Router extracted provider {} from URI: {}", target_provider, uri);
                             frame.target_id = target_provider;
-
-                            std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
-                            pending_requests_[global_id_str] = {source_id, frame.trace_id, frame.span_id, frame.parent_span_id, frame.timestamp}; 
-
+                            // NAT table already has this entry from the earlier insert — no re-insert needed.
                             dispatch(target_provider, frame);
                             return;
                         } else {
@@ -927,10 +1088,7 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                             spdlog::info("Call Router extracted provider {}, tool: {}", target_provider, actual_tool);
                             frame.payload["params"]["name"] = actual_tool;
                             frame.target_id = target_provider;
-
-                            std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
-                            pending_requests_[global_id_str] = {source_id, frame.trace_id, frame.span_id, frame.parent_span_id, frame.timestamp}; 
-
+                            // NAT table already has this entry from the earlier insert — no re-insert needed.
                             dispatch(target_provider, frame);
                             return;
                         } else {
@@ -944,8 +1102,8 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 final_response["jsonrpc"] = "2.0";
                 
                 std::string global_id_str = frame.payload["id"].is_string() ? frame.payload["id"].get<std::string>() : frame.payload["id"].dump();
-                auto orig_it = original_ids_.find(global_id_str);
-                final_response["id"] = (orig_it != original_ids_.end()) ? orig_it->second : frame.payload["id"];
+                auto nat_it = nat_table_.find(global_id_str);
+                final_response["id"] = (nat_it != nat_table_.end()) ? nat_it->second.original_id : frame.payload["id"];
 
                 // ------------------ POLICY ENFORCEMENT ------------------
                 std::string active_role_name = get_active_role_name(frame, source_id);
@@ -1034,12 +1192,33 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                 MessageFrame reply_frame;
                 reply_frame.source_id = "luotsi-hub";
                 reply_frame.target_id = source_id;
-                reply_frame.payload = final_response;
-                
+                reply_frame.payload   = final_response;
+
+                // Carry trace context through the virtual-registry reply so this
+                // internal round-trip appears as a connected span in the dashboard.
+                if (nat_it != nat_table_.end()) {
+                    reply_frame.trace_id       = nat_it->second.trace_id;
+                    reply_frame.parent_span_id = nat_it->second.span_id;
+                    reply_frame.span_id        = generate_uuid_v4().substr(0, 16);
+
+                    if (observability_) {
+                        PendingRequestState req_state {
+                            nat_it->second.source_id,
+                            nat_it->second.trace_id,
+                            nat_it->second.span_id,
+                            nat_it->second.parent_span_id,
+                            nat_it->second.start_time
+                        };
+                        auto dur = std::chrono::steady_clock::now() - nat_it->second.start_time;
+                        auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
+                        observability_->log_span(req_state, reply_frame, dur_ms);
+                    }
+                    nat_it->second.fulfilled = true;
+                }
+
                 if (ports_.count(source_id)) {
-                    ports_[source_id]->send(reply_frame);
-                    pending_requests_.erase(global_id_str);
-                    original_ids_.erase(global_id_str);
+                    // Use dispatch() so traceparent header is injected and log_message fires.
+                    dispatch(source_id, reply_frame);
                 }
                 return;
             } else {
@@ -1062,7 +1241,9 @@ void Runtime::route_message(luotsi::MessageFrame& frame, const std::string& sour
                         return;
                     }
 
-                    target_port_it->second->send(frame);
+                    // Use dispatch() so traceparent is injected, observability logged,
+                    // and agent_active_trace_ is registered for session trace propagation.
+                    dispatch(route.target, frame);
                 } else {
                     spdlog::error("Route target '{}' not found in ports", route.target);
                 }
@@ -1234,6 +1415,24 @@ bool Runtime::is_resource_allowed(const std::string& role_name, const std::strin
     }
 
     return false;
+}
+
+luotsi::NatEntry* Runtime::find_most_likely_parent(const std::string& node_id) {
+    // Search NAT table for the most recent unfulfilled request targeting this node.
+    // We iterate backwards from most recent insertions for efficiency and causal alignment.
+    for (auto it = nat_insertion_order_.rbegin(); it != nat_insertion_order_.rend(); ++it) {
+        auto n_it = nat_table_.find(*it);
+        if (n_it != nat_table_.end()) {
+            const auto& entry = n_it->second;
+            // The "node_id" is the suspected agent/node currently issuing a sub-request.
+            // A causal parent is an inbound request where this node was the TARGET.
+            // We only consider unfulfilled requests (active "causal shadows").
+            if (!entry.fulfilled && entry.target_id == node_id) {
+                return &n_it->second;
+            }
+        }
+    }
+    return nullptr;
 }
 
 } // namespace luotsi::internal
